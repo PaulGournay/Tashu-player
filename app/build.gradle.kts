@@ -16,9 +16,9 @@ android {
         // 28 = DynamicsProcessing (EQ graphique + gain ReplayGain).
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-        // Binaires Python/ffmpeg embarqués : uniquement ARM 64 bits (tous les téléphones récents) pour limiter la taille.
+        versionCode = 2
+        versionName = "0.2.0"
+        // Téléphones récents uniquement (ARM 64 bits) : APK nettement plus léger.
         ndk { abiFilters += listOf("arm64-v8a") }
 
         // Client ID OAuth de type "Web application" (pas Android !) — voir README.
@@ -32,6 +32,8 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Même clé que le debug : la connexion Google (client OAuth Android) est liée à son empreinte SHA-1.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -42,7 +44,8 @@ android {
         jvmTarget = "17"
         freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
     }
-    // youtubedl-android extrait ses binaires natifs au premier lancement : ils doivent rester non compressés.
+    // Les .so de Filament (scène 3D) ne sont pas alignés en 16 ko : on les laisse extraire à l'installation
+    // plutôt que charger depuis l'APK, ce qui évite l'avertissement de compatibilité d'Android 15+.
     packaging {
         jniLibs.useLegacyPackaging = true
     }
@@ -103,10 +106,15 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.coil.compose)
+    // Pochettes animées (GIF, WebP animé, APNG) : embarquées dans le fichier ou cover.gif dans le dossier Drive.
+    implementation(libs.coil.gif)
     implementation(libs.androidx.palette)
     implementation(libs.material.kolor)
 
-    // Import de playlists : Python + yt-dlp + ffmpeg embarqués.
-    implementation(libs.youtubedl.library)
-    implementation(libs.youtubedl.ffmpeg)
+    // Rendu 3D (Filament) du lecteur CD en paysage.
+    implementation(libs.sceneview)
+
+    // Verre dépoli (flou d'arrière-plan) pour la barre de navigation et le mini-lecteur.
+    implementation(libs.haze)
+
 }

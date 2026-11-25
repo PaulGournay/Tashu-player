@@ -10,3 +10,6 @@
 .cxx/
 *.keystore
 .kotlin/
+
+# Modèles 3D tiers (licence non redistribuable) : gardés en local, hors du dépôt public
+app/src/main/assets/models/*.glb

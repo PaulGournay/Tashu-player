@@ -1,5 +1,7 @@
 package com.tashu.player.ui.theme
 
+import androidx.compose.ui.text.font.Font
+import com.tashu.player.R
 import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.compose.animation.animateColorAsState
@@ -80,17 +82,30 @@ private fun ThemeStyle.toPaletteStyle(): PaletteStyle = when (this) {
 }
 
 /**
- * Titres d'album en serif (esprit pochette / livret), interface en sans-serif système.
- * Échelle typographique resserrée : 34 / 24 / 18 / 15 / 13.
+ * Inter partout : grotesque neutre et nette, très proche du SF d'Apple (licence SIL OFL).
+ * Approche « iOS » : interlettrage resserré sur les grandes tailles, titres en semi-gras.
+ * Échelle typographique : 34 / 24 / 18 / 15 / 13.
  */
-private val Serif = FontFamily.Serif
+val Inter = FontFamily(
+    Font(R.font.inter_regular, FontWeight.Normal),
+    Font(R.font.inter_semibold, FontWeight.SemiBold),
+    Font(R.font.inter_semibold, FontWeight.Bold),
+)
 val TashuTypography = Typography().run {
+    fun TextStyle.inter(tracking: Float = letterSpacing.value) = copy(fontFamily = Inter, letterSpacing = tracking.sp)
     copy(
-        displaySmall = TextStyle(fontFamily = Serif, fontWeight = FontWeight.Medium, fontSize = 34.sp, lineHeight = 40.sp),
-        headlineSmall = TextStyle(fontFamily = Serif, fontWeight = FontWeight.Medium, fontSize = 24.sp, lineHeight = 30.sp),
-        titleMedium = titleMedium.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-        bodyLarge = bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp),
-        labelMedium = labelMedium.copy(fontSize = 13.sp, letterSpacing = 0.1.sp),
+        displayLarge = displayLarge.inter(-1.2f), displayMedium = displayMedium.inter(-1f),
+        displaySmall = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = 34.sp, lineHeight = 40.sp, letterSpacing = (-0.8).sp),
+        headlineLarge = headlineLarge.inter(-0.6f), headlineMedium = headlineMedium.copy(fontWeight = FontWeight.Bold).inter(-0.5f),
+        headlineSmall = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = (-0.5).sp),
+        titleLarge = titleLarge.copy(fontWeight = FontWeight.Bold).inter(-0.4f),
+        titleMedium = titleMedium.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold).inter(-0.2f),
+        titleSmall = titleSmall.inter(-0.1f),
+        bodyLarge = bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp).inter(-0.2f),
+        bodyMedium = bodyMedium.inter(-0.1f), bodySmall = bodySmall.inter(0f),
+        labelLarge = labelLarge.inter(-0.1f),
+        labelMedium = labelMedium.copy(fontSize = 13.sp).inter(0f),
+        labelSmall = labelSmall.inter(0.1f),
     )
 }
 

@@ -164,6 +164,10 @@ enum class NowPlayingStyle { CLASSIC, IMMERSIVE, MINIMAL }
 
 // ---------- Thème ----------
 
+enum class DeckMode(val label: String) { CD("Platine CD"), WALKMAN("Walkman"), FLIP("Liste") }
+
+enum class UiStyle(val label: String) { LIQUID_GLASS("Liquid Glass"), MINIMAL("Minimaliste") }
+
 enum class ThemeMode(val label: String) { SYSTEM("Système"), LIGHT("Clair"), DARK("Sombre") }
 
 enum class ThemeColorSource(val label: String) { ARTWORK("Pochette"), WALLPAPER("Fond d'écran"), FIXED("Couleur fixe") }
@@ -182,4 +186,8 @@ data class ThemeSettings(
     /** Fond noir pur en mode sombre. */
     val amoled: Boolean = true,
     val style: ThemeStyle = ThemeStyle.TONAL_SPOT,
+    /** Liquid Glass (verre, nuage animé, réfraction) ou interface minimaliste (aplats sombres). */
+    val uiStyle: UiStyle = UiStyle.LIQUID_GLASS,
+    /** Paysage : ce que fait la pochette centrale quand on la touche (platine CD, walkman ou liste façon iOS 3). */
+    val deckMode: DeckMode = DeckMode.CD,
 )

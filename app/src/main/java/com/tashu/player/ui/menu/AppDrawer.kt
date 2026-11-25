@@ -1,10 +1,23 @@
 package com.tashu.player.ui.menu
 
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.text.style.TextOverflow
+import com.tashu.player.drive.scan.ScanProgress
+import com.tashu.player.domain.model.UiStyle
+import com.tashu.player.domain.model.DeckMode
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import com.tashu.player.ui.theme.GlassBackdrop
+import com.tashu.player.ui.theme.bubbleClickable
+import com.tashu.player.ui.theme.liquidGlass
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,20 +38,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.NavigationDrawerItem
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -66,99 +71,196 @@ private val FIXED_COLORS = listOf(
     0xFFE6A23C, 0xFFD2601A, 0xFFC62828, 0xFFAD1457, 0xFF6A1B9A,
 ).map { Color(it) }
 
-/** Menu latéral : bannière Tashu, raccourcis de la bibliothèque et réglages du thème. */
+/** Menu latéral : panneau flottant en verre « Clear », raccourcis de la bibliothèque et réglages du thème. */
 @Composable
 fun AppDrawer(
+    backdrop: GlassBackdrop,
     theme: ThemeSettings,
     onThemeChange: ((ThemeSettings) -> ThemeSettings) -> Unit,
     onLibrary: () -> Unit,
-    onImport: () -> Unit,
     onManageFolders: () -> Unit,
+    scan: ScanProgress,
     onRescan: () -> Unit,
 ) {
-    // Pas de marge système sur le tiroir : la bannière passe sous la barre d'état.
-    ModalDrawerSheet(windowInsets = WindowInsets(0)) {
-        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
-            Banner()
-            Spacer(Modifier.height(12.dp))
-            NavigationDrawerItem(
-                label = { Text("Bibliothèque") }, selected = true, onClick = onLibrary,
-                icon = { Icon(Icons.Rounded.LibraryMusic, contentDescription = null) },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            NavigationDrawerItem(
-                label = { Text("Dossiers Drive") }, selected = false, onClick = onManageFolders,
-                icon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            NavigationDrawerItem(
-                label = { Text("Importer une playlist") }, selected = false, onClick = onImport,
-                icon = { Icon(Icons.Rounded.CloudDownload, contentDescription = null) },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            NavigationDrawerItem(
-                label = { Text("Rescanner Drive") }, selected = false, onClick = onRescan,
-                icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 12.dp))
+    ModalDrawerSheet(
+        windowInsets = WindowInsets(0),
+        drawerContainerColor = Color.Transparent,
+        drawerTonalElevation = 0.dp,
+        drawerShape = RoundedCornerShape(0.dp),
+    ) {
+        Column(
+            Modifier
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 10.dp)
+                .fillMaxHeight()
+                .liquidGlass(backdrop, corner = 34.dp, tint = Color.Black.copy(alpha = 0.55f), lens = 30.dp, frost = 22.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Header()
+            Spacer(Modifier.height(18.dp))
+            DrawerItem(Icons.Rounded.LibraryMusic, "Bibliothèque", selected = true, onClick = onLibrary)
+            DrawerItem(Icons.Rounded.FolderOpen, "Dossiers Drive", selected = false, onClick = onManageFolders)
+            ScanCard(scan, onRescan)
+            Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.10f)))
             ThemeSection(theme, onThemeChange)
+            Credits()
         }
     }
 }
 
 @Composable
-private fun Banner() {
+private fun Header() {
     val scheme = MaterialTheme.colorScheme
-    Box(
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null,
+            colorFilter = ColorFilter.tint(Color.White),
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Brush.linearGradient(listOf(scheme.primary, scheme.tertiary))),
+        )
+        Column(Modifier.padding(start = 14.dp)) {
+            Text(stringResource(R.string.app_name), fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, color = Color.White)
+            Text("Votre musique, depuis Google Drive", fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
+        }
+    }
+}
+
+@Composable
+private fun DrawerItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .bubbleClickable(pressedScale = 0.95f, onClick = onClick)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) Color.White.copy(alpha = 0.13f) else Color.Transparent)
+            .then(if (selected) Modifier.border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.45f), Color.White.copy(alpha = 0.04f), Color.White.copy(alpha = 0.25f))), RoundedCornerShape(16.dp)) else Modifier)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = if (selected) 1f else 0.75f), modifier = Modifier.size(22.dp))
+        Text(label, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, color = Color.White, modifier = Modifier.padding(start = 14.dp))
+    }
+}
+
+/**
+ * Rescan Drive : bouton au repos ; pendant l'indexation, barre de progression, compteurs
+ * (dossiers, fichiers indexés / inchangés / en erreur) et nom du fichier en cours.
+ */
+@Composable
+private fun ScanCard(scan: ScanProgress, onRescan: () -> Unit) {
+    if (!scan.running) {
+        DrawerItem(Icons.Rounded.Refresh, "Rescanner Drive", selected = false, onClick = onRescan)
+        return
+    }
+    val done = scan.filesIndexed + scan.filesSkipped
+    val shape = RoundedCornerShape(16.dp)
+    Column(
         Modifier
             .fillMaxWidth()
-            .background(Brush.linearGradient(listOf(scheme.primary, scheme.tertiary)))
-            .statusBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 28.dp),
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.08f))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(R.drawable.ic_launcher_foreground),
-                contentDescription = null,
-                colorFilter = ColorFilter.tint(scheme.primary),
-                modifier = Modifier.size(64.dp).clip(CircleShape).background(scheme.onPrimary),
+            Icon(Icons.Rounded.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+            Text("Indexation de Drive…", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(start = 12.dp))
+        }
+        val fraction = if (scan.filesFound > 0) done.toFloat() / scan.filesFound else 0f
+        if (scan.filesFound > 0) {
+            LinearProgressIndicator(
+                progress = { fraction.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                color = Color(0xFF34C759), trackColor = Color.White.copy(alpha = 0.12f), drawStopIndicator = {},
             )
-            Column(Modifier.padding(start = 16.dp)) {
-                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.displaySmall, color = scheme.onPrimary)
-                Text("Votre musique, depuis Google Drive", style = MaterialTheme.typography.labelMedium, color = scheme.onPrimary.copy(alpha = 0.85f))
-            }
+        } else {
+            LinearProgressIndicator(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape), color = Color(0xFF34C759), trackColor = Color.White.copy(alpha = 0.12f))
+        }
+        Text(
+            if (scan.filesFound > 0) "$done sur ${scan.filesFound} fichiers · ${(fraction * 100).toInt()} %"
+            else "Exploration des dossiers…",
+            fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f),
+        )
+        Text(
+            buildList {
+                add("${scan.foldersVisited} dossier${if (scan.foldersVisited > 1) "s" else ""}")
+                add("${scan.filesIndexed} nouveau${if (scan.filesIndexed > 1) "x" else ""}")
+                add("${scan.filesSkipped} inchangé${if (scan.filesSkipped > 1) "s" else ""}")
+                if (scan.errors > 0) add("${scan.errors} erreur${if (scan.errors > 1) "s" else ""}")
+            }.joinToString(" · "),
+            fontSize = 12.sp, color = Color.White.copy(alpha = 0.55f),
+        )
+        scan.current?.let {
+            Text(it, fontSize = 12.sp, color = Color.White.copy(alpha = 0.45f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Pastille de choix en verre, partagée par toutes les options du thème. */
+@Composable
+private fun GlassOption(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Text(
+        label,
+        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+        color = if (selected) Color.Black else Color.White.copy(alpha = 0.9f),
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .bubbleClickable(pressedScale = 0.92f, onClick = onClick)
+            .clip(CircleShape)
+            .background(if (selected) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.08f))
+            .border(1.dp, if (selected) Color.Transparent else Color.White.copy(alpha = 0.14f), CircleShape)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ThemeSection(theme: ThemeSettings, onChange: ((ThemeSettings) -> ThemeSettings) -> Unit) {
-    Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Thème", style = MaterialTheme.typography.titleMedium)
+    Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Apparence", fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp, color = Color.White)
+
+        Label("Style")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            UiStyle.entries.forEach { st ->
+                GlassOption(st.label, theme.uiStyle == st, Modifier.weight(1f)) { onChange { it.copy(uiStyle = st) } }
+            }
+        }
+        Label("Paysage : toucher la pochette")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            DeckMode.entries.forEach { m ->
+                GlassOption(m.label, theme.deckMode == m, Modifier.weight(1f)) { onChange { it.copy(deckMode = m) } }
+            }
+        }
+        Text(
+            when (theme.deckMode) {
+                DeckMode.CD -> "Le disque sort de la pochette et part dans la platine 3D."
+                DeckMode.WALKMAN -> "Des cassettes à la place des pochettes ; la cassette touchée entre dans le walkman."
+                DeckMode.FLIP -> "La pochette se retourne et affiche la liste des titres, comme sur iOS 3."
+            },
+            fontSize = 12.sp, color = Color.White.copy(alpha = 0.55f),
+        )
+
+        Box(Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.10f)))
+        Text("Thème", fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp, color = Color.White)
 
         Label("Mode")
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            ThemeMode.entries.forEachIndexed { i, mode ->
-                SegmentedButton(
-                    selected = theme.mode == mode,
-                    onClick = { onChange { it.copy(mode = mode) } },
-                    shape = SegmentedButtonDefaults.itemShape(i, ThemeMode.entries.size),
-                ) { Text(mode.label) }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            ThemeMode.entries.forEach { mode ->
+                GlassOption(mode.label, theme.mode == mode, Modifier.weight(1f)) { onChange { it.copy(mode = mode) } }
             }
         }
 
         Label("Couleur")
         val sources = ThemeColorSource.entries.filter { it != ThemeColorSource.WALLPAPER || Build.VERSION.SDK_INT >= 31 }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            sources.forEach { source ->
-                FilterChip(
-                    selected = theme.colorSource == source,
-                    onClick = { onChange { it.copy(colorSource = source) } },
-                    label = { Text(source.label) },
-                )
-            }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            sources.forEach { source -> GlassOption(source.label, theme.colorSource == source) { onChange { it.copy(colorSource = source) } } }
         }
         if (theme.colorSource == ThemeColorSource.FIXED) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -166,44 +268,73 @@ private fun ThemeSection(theme: ThemeSettings, onChange: ((ThemeSettings) -> The
             }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("Noir pur", style = MaterialTheme.typography.bodyLarge)
-                Text("Fond noir en mode sombre (écrans OLED)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Noir pur", fontSize = 15.sp, color = Color.White)
+                Text("Fond noir en mode sombre (écrans OLED)", fontSize = 12.sp, color = Color.White.copy(alpha = 0.55f))
             }
-            Switch(checked = theme.amoled, onCheckedChange = { v -> onChange { it.copy(amoled = v) } })
+            Switch(
+                checked = theme.amoled, onCheckedChange = { v -> onChange { it.copy(amoled = v) } },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF34C759), checkedBorderColor = Color.Transparent,
+                    uncheckedThumbColor = Color.White, uncheckedTrackColor = Color.White.copy(alpha = 0.16f), uncheckedBorderColor = Color.Transparent,
+                ),
+            )
         }
 
         Label("Style des couleurs")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ThemeStyle.entries.forEach { style ->
-                FilterChip(
-                    selected = theme.style == style,
-                    onClick = { onChange { it.copy(style = style) } },
-                    label = { Text(style.label) },
-                )
-            }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            ThemeStyle.entries.forEach { style -> GlassOption(style.label, theme.style == style) { onChange { it.copy(style = style) } } }
         }
+    }
+}
+
+/** Crédits des modèles 3D (licence CC BY 4.0 : attribution obligatoire). */
+@Composable
+private fun Credits() {
+    Column(Modifier.padding(horizontal = 4.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Label("Crédits")
+        Text("« Old Walkman » par Charles48900, CC BY 4.0", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f))
+        Text("« Cassette tapes » par FEDDYFAZBARE, CC BY 4.0", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f))
+        Text("Modèles adaptés (pièces séparées, textures réduites).", fontSize = 11.sp, color = Color.White.copy(alpha = 0.4f))
+        Text("Police Inter, © The Inter Project Authors, SIL Open Font License 1.1", fontSize = 11.sp, color = Color.White.copy(alpha = 0.4f))
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Column(Modifier.weight(1f).padding(end = 10.dp)) {
+            Text(title, fontSize = 15.sp, color = Color.White)
+            Text(subtitle, fontSize = 12.sp, color = Color.White.copy(alpha = 0.55f))
+        }
+        Switch(
+            checked = checked, onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF34C759), checkedBorderColor = Color.Transparent,
+                uncheckedThumbColor = Color.White, uncheckedTrackColor = Color.White.copy(alpha = 0.16f), uncheckedBorderColor = Color.Transparent,
+            ),
+        )
     }
 }
 
 @Composable
 private fun Label(text: String) {
-    Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(text.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, color = Color.White.copy(alpha = 0.5f), modifier = Modifier.padding(top = 6.dp))
 }
 
 @Composable
 private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(50))
+            .bubbleClickable(onClick = onClick)
+            .size(34.dp)
+            .clip(CircleShape)
             .background(color)
-            .then(if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier)
-            .clickable(onClick = onClick)
+            .border(if (selected) 2.dp else 1.dp, if (selected) Color.White else Color.White.copy(alpha = 0.2f), CircleShape)
             .semantics { contentDescription = "Couleur du thème" },
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) Icon(Icons.Rounded.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+        if (selected) Icon(Icons.Rounded.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
     }
 }

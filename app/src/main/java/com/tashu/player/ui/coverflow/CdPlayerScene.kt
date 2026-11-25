@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -133,6 +134,9 @@ internal fun CdPlayerScene(
     }
     BackHandler { eject() }
 
+    val context = LocalContext.current
+    val use3d = remember { stereoModelAvailable(context) }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val w = constraints.maxWidth.toFloat()
@@ -153,9 +157,11 @@ internal fun CdPlayerScene(
         val sleeve0 = Offset(w / 2f, px(coverTop) + cover / 2f)
         val sleeve1 = Offset(w * 0.25f, h * 0.46f)
         val sleeve3 = Offset(pad + thumb / 2f, pad + thumb / 2f)
-        val sleeveCenter = lerp(lerp(sleeve0, sleeve1, a), sleeve3, d)
-        val sleeveSize = lerp(lerp(cover, cover * 0.82f, a), thumb, d)
-        val sleeveRotY = lerp(22f * a, 0f, d)
+        // 0 → 0,5 : la pochette se place (à plat, sans pivot) ; 0,45 → 1 : le CD sort par son bord droit.
+        val place = FastOutSlowInEasing.transform((p / 0.5f).coerceIn(0f, 1f))
+        val sleeveCenter = lerp(lerp(sleeve0, sleeve1, place), sleeve3, d)
+        val sleeveSize = lerp(lerp(cover, cover * 0.82f, place), thumb, d)
+        val sleeveRotY = 0f
 
         val rightW = w - panelW
         val deckW = minOf(rightW * 0.86f, h * 0.44f / 0.40f)
@@ -164,18 +170,102 @@ internal fun CdPlayerScene(
         val deckTop = h * 0.40f - deckH / 2f
         val appear = FastOutSlowInEasing.transform(((p - 0.3f) / 0.7f).coerceIn(0f, 1f))
 
+        // Avec le modèle 3D : la chaîne occupe toute la partie droite, la fente vient de sa projection.
+        val stageTop = 0f
+        val stageH = h * 0.80f
         val slotY = deckTop + deckH * 0.24f
         val slotL = deckLeft + deckW * 0.05f
         val slotW = deckW * 0.55f
         val trayW = slotW * 0.94f
         val trayCx = slotL + slotW / 2f
-        val trayDepth = deckH * 0.95f
+        val trayDepth = if (use3d) slotW * 0.62f else deckH * 0.95f
         val open = b * (1f - d)
         val discInTray = trayW * 0.62f
         fun trayDiscY(openFraction: Float) = slotY + trayDepth * openFraction - trayDepth * 0.45f
 
-        // ---- Platine ----
-        HiFiDeck(
+        // ---- Platine : chaîne 3D si le modèle est présent, sinon façade dessinée ----
+        val trackNumber = tracks.indexOfFirst { it.id == player.mediaId }.takeIf { it >= 0 }?.plus(1)
+        val livePosition = rememberLivePosition(player.positionMs, player.isPlaying).value
+        val deckStatus = when {
+            open > 0.05f -> "OPEN"
+            ejecting -> "EJECT"
+            p < CD_LOADED -> "READING"
+            player.isBuffering -> "LOAD…"
+            player.isPlaying -> "▶ PLAY"
+            player.positionMs > 0 -> "❚❚ PAUSE"
+            else -> "■ STOP"
+        }
+        if (use3d) {
+            // Ombre douce au sol sous la chaîne : elle ne flotte plus dans le noir.
+            Canvas(
+                Modifier
+                    .offset { IntOffset(panelW.roundToInt(), (stageTop + stageH * 0.60f).roundToInt()) }
+                    .size(toDp(rightW), toDp(stageH * 0.16f))
+                    .graphicsLayer { alpha = appear },
+            ) {
+                val cx = size.width / 2f
+                val rw = size.width * 0.36f
+                drawOval(
+                    Brush.radialGradient(
+                        listOf(Color.Black.copy(alpha = 0.9f), Color(0xFF0B0B0D).copy(alpha = 0.5f), Color.Transparent),
+                        center = Offset(cx, size.height / 2f),
+                        radius = rw,
+                    ),
+                    topLeft = Offset(cx - rw, 0f),
+                    size = Size(rw * 2f, size.height),
+                )
+                drawOval(
+                    Brush.radialGradient(
+                        listOf(Color.White.copy(alpha = 0.05f), Color.Transparent),
+                        center = Offset(cx, size.height / 2f), radius = rw * 1.2f,
+                    ),
+                    topLeft = Offset(cx - rw * 1.2f, size.height * 0.1f),
+                    size = Size(rw * 2.4f, size.height * 0.8f),
+                )
+            }
+            Stereo3D(
+                appear = appear,
+                trayOpen = open,
+                // Le disque 3D apparaît au-dessus du plateau et s'y pose pendant que le disque 2D s'efface.
+                discDrop = when {
+                    p < 2.3f -> -1f
+                    p < 3f -> (p - 2.3f) / 0.7f
+                    else -> 1f
+                },
+                spinning = player.isPlaying && p >= CD_LOADED,
+                artworkPath = album.artworkPath,
+                lcd = LcdInfo(trackNumber, tracks.size, livePosition / 1000, deckStatus),
+                controlsEnabled = p >= CD_LOADED && !ejecting,
+                onControl = { c ->
+                    when (c) {
+                        DeckControl.PREVIOUS -> vm.player.previous()
+                        DeckControl.NEXT -> vm.player.next()
+                        DeckControl.PLAY_PAUSE, DeckControl.CD_PLAY_PAUSE -> vm.player.togglePlay()
+                        DeckControl.SHUFFLE -> vm.player.toggleShuffle()
+                        DeckControl.REPEAT -> vm.player.cycleRepeat()
+                        DeckControl.POWER -> { if (player.isPlaying) vm.player.togglePlay(); vm.player.seekTo(0) }
+                        DeckControl.EJECT -> eject()
+                        DeckControl.BLANK, DeckControl.BASS_TREBLE -> Unit // s'enfoncent, sans action
+                    }
+                },
+                modifier = Modifier
+                    .offset { IntOffset(panelW.roundToInt(), stageTop.roundToInt()) }
+                    .size(toDp(rightW), toDp(stageH)),
+            )
+            ControlStrip(
+                playing = player.isPlaying,
+                enabled = p >= CD_LOADED && !ejecting,
+                onPrevious = { vm.player.previous() },
+                onPlayPause = { vm.player.togglePlay() },
+                onStop = { if (player.isPlaying) vm.player.togglePlay(); vm.player.seekTo(0) },
+                onNext = { vm.player.next() },
+                onEject = ::eject,
+                modifier = Modifier
+                    .offset { IntOffset(panelW.roundToInt(), (stageTop + stageH).roundToInt()) }
+                    .size(toDp(rightW), toDp(h - stageH))
+                    .graphicsLayer { alpha = appear },
+            )
+        } else HiFiDeck(
             trackNumber = tracks.indexOfFirst { it.id == player.mediaId }.takeIf { it >= 0 }?.plus(1),
             trackCount = tracks.size,
             positionMs = rememberLivePosition(player.positionMs, player.isPlaying).value,
@@ -208,7 +298,7 @@ internal fun CdPlayerScene(
 
         // ---- Tiroir (et disque posé dedans), coupé au niveau de la fente ----
         val boxLeft = slotL - slotW * 0.1f
-        Box(
+        if (!use3d) Box(
             Modifier
                 .zIndex(0.5f)
                 .offset { IntOffset(boxLeft.roundToInt(), slotY.roundToInt()) }
@@ -231,16 +321,22 @@ internal fun CdPlayerScene(
 
         // ---- Disque en vol : sort de la pochette (derrière elle), puis rejoint le tiroir ----
         if (p < 3f) {
-            val slide = FastOutSlowInEasing.transform(((p - 0.25f) / 0.75f).coerceIn(0f, 1f))
-            val outPos = sleeveCenter + Offset(sleeveSize * 0.62f * slide, 0f)
-            val outSize = sleeveSize * 0.92f
+            val slide = FastOutSlowInEasing.transform(((p - 0.45f) / 0.55f).coerceIn(0f, 1f))
+            val outSize = sleeveSize * 0.94f
+            val outDistance = sleeveSize * 0.70f * slide
+            val outPos = sleeveCenter + Offset(outDistance, 0f)
+            // Le disque roule en sortant : rotation proportionnelle à la distance parcourue.
+            val rolled = outDistance / (Math.PI.toFloat() * outSize) * 360f
             val move = FastOutSlowInEasing.transform((c / 0.75f).coerceIn(0f, 1f))
             val drop = FastOutSlowInEasing.transform(((c - 0.75f) / 0.25f).coerceIn(0f, 1f))
-            val target = Offset(trayCx, trayDiscY(1f))
+            // En 3D, la vue Filament est toujours dessinée au-dessus : le CD 2D s'efface avant d'atteindre la chaîne.
+            val target = if (use3d) Offset(panelW + rightW * 0.06f, stageTop + stageH * 0.42f) else Offset(trayCx, trayDiscY(1f))
             val above = target - Offset(0f, h * 0.20f)
-            val pos = lerp(lerp(outPos, above, move), target, drop)
-            val size = lerp(outSize, discInTray, move)
-            if (slide > 0f) {
+            val pos = if (use3d) lerp(outPos, above, move) else lerp(lerp(outPos, above, move), target, drop)
+            val size = if (use3d) lerp(outSize, rightW * 0.16f, move) else lerp(outSize, discInTray, move)
+            // En 3D, le disque 2D s'efface au-dessus de la chaîne : le disque 3D prend le relais.
+            val fade = if (use3d) 1f - ((c - 0.15f) / 0.35f).coerceIn(0f, 1f) else 1f
+            if (slide > 0f && fade > 0f) {
                 CompactDisc(
                     album.artworkPath,
                     Modifier
@@ -248,8 +344,9 @@ internal fun CdPlayerScene(
                         .offset { IntOffset((pos.x - size / 2f).roundToInt(), (pos.y - size / 2f).roundToInt()) }
                         .size(toDp(size))
                         .graphicsLayer {
+                            alpha = fade
                             rotationX = 68f * move
-                            rotationZ = 200f * slide + 160f * c
+                            rotationZ = rolled + 160f * c
                             cameraDistance = 14f * density.density
                         },
                 )
@@ -285,7 +382,10 @@ internal fun CdPlayerScene(
             val current = tracks.firstOrNull { it.id == player.mediaId }
             Column(
                 Modifier
-                    .offset { IntOffset(panelW.roundToInt(), (slotY + trayDepth + px(12.dp)).roundToInt()) }
+                    .offset {
+                        val y = if (use3d) stageTop + stageH - px(44.dp) else slotY + trayDepth + px(12.dp)
+                        IntOffset(panelW.roundToInt(), y.roundToInt())
+                    }
                     .width(toDp(rightW))
                     .graphicsLayer { alpha = d },
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -446,6 +546,31 @@ private fun HiFiDeck(
     }
 }
 
+/** Bandeau sous la chaîne 3D : boutons de transport (l'afficheur est celui de la chaîne). */
+@Composable
+internal fun ControlStrip(
+    playing: Boolean,
+    enabled: Boolean,
+    onPrevious: () -> Unit,
+    onPlayPause: () -> Unit,
+    onStop: () -> Unit,
+    onNext: () -> Unit,
+    onEject: () -> Unit,
+    modifier: Modifier,
+    ejectLabel: String = "Éjecter le CD",
+) {
+    Row(modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val b = 34.dp
+            DeckButton(Icons.Rounded.SkipPrevious, "Piste précédente", b, enabled, onPrevious)
+            DeckButton(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Lecture", b, enabled, onPlayPause)
+            DeckButton(Icons.Rounded.Stop, "Stop", b, enabled, onStop)
+            DeckButton(Icons.Rounded.SkipNext, "Piste suivante", b, enabled, onNext)
+            DeckButton(Icons.Rounded.Eject, ejectLabel, b, enabled, onEject)
+        }
+    }
+}
+
 @Composable
 private fun DeckButton(icon: ImageVector, label: String, size: Dp, enabled: Boolean, onClick: () -> Unit) {
     Box(
@@ -463,7 +588,7 @@ private fun DeckButton(icon: ImageVector, label: String, size: Dp, enabled: Bool
 
 /** Liste des titres du CD chargé ; la pochette animée vient se poser dans l'espace réservé de l'en-tête. */
 @Composable
-private fun TrackPanel(
+internal fun TrackPanel(
     album: Album,
     tracks: List<Track>,
     playingId: String?,

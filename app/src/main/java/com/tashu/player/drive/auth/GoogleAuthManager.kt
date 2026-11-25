@@ -71,7 +71,7 @@ class GoogleAuthManager @Inject constructor(
     val error: StateFlow<String?> = _error
 
     private val driveScopeRequest = AuthorizationRequest.builder()
-        .setRequestedScopes(listOf(Scope(DRIVE_READONLY_SCOPE), Scope(DRIVE_FILE_SCOPE)))
+        .setRequestedScopes(listOf(Scope(DRIVE_READONLY_SCOPE)))
         .build()
 
     /** Étape 1 : doit être appelé avec un contexte Activity (bottom sheet Credential Manager). */
@@ -161,8 +161,6 @@ class GoogleAuthManager @Inject constructor(
 
     companion object {
         const val DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-        /** Écriture limitée aux fichiers créés par l'app (dossier « Tashu » des imports). */
-        const val DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
         private const val TOKEN_TTL_MS = 45 * 60 * 1000L
         private const val KEY_EMAIL = "email"
         private const val KEY_NAME = "name"

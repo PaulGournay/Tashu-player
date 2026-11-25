@@ -80,6 +80,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.tashu.player.domain.model.Album
+import com.tashu.player.domain.model.DeckMode
 import com.tashu.player.playback.MediaItemMapper
 import com.tashu.player.ui.MainViewModel
 import kotlinx.coroutines.launch
@@ -115,10 +116,23 @@ fun CoverFlowScreen(vm: MainViewModel) {
     val position = remember { Animatable(savedIndex.toFloat()) }
     val scope = rememberCoroutineScope()
     var flippedId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val context0 = LocalContext.current
+    val deckMode = vm.themeSettings.collectAsStateWithLifecycle().value.deckMode
+    val walkmanReady = remember { walkmanModelAvailable(context0) }
+    // Mode walkman : cassettes à la place des pochettes, et la cassette touchée part dans le walkman.
+    val tapes = deckMode == DeckMode.WALKMAN && walkmanReady
+    var tapeAlbumId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val tapeProgress = remember { Animatable(0f) }
     // Album dont le CD est dans la platine (null = carrousel) et avancement de son animation.
     var cdAlbumId by rememberSaveable { mutableStateOf<Long?>(null) }
     val cdProgress = remember { Animatable(0f) }
-    val coverFade = { if (cdAlbumId == null) 0f else (cdProgress.value / 0.6f).coerceIn(0f, 1f) }
+    val coverFade = {
+        when {
+            cdAlbumId != null -> (cdProgress.value / 0.6f).coerceIn(0f, 1f)
+            tapeAlbumId != null -> (tapeProgress.value / 0.6f).coerceIn(0f, 1f)
+            else -> 0f
+        }
+    }
 
     LaunchedEffect(albums.size) {
         if (position.value > albums.lastIndex) position.snapTo(albums.lastIndex.toFloat())
@@ -158,8 +172,8 @@ fun CoverFlowScreen(vm: MainViewModel) {
         val stackGapPx = coverPx * 0.14f    // écart entre pochettes empilées
         val dragUnitPx = coverPx * 0.40f    // glissement nécessaire pour avancer d'un album
 
-        val dragModifier = Modifier.pointerInput(albums.size, flippedId, cdAlbumId) {
-            if (flippedId != null || cdAlbumId != null) return@pointerInput
+        val dragModifier = Modifier.pointerInput(albums.size, flippedId, cdAlbumId, tapeAlbumId) {
+            if (flippedId != null || cdAlbumId != null || tapeAlbumId != null) return@pointerInput
             val tracker = VelocityTracker()
             detectHorizontalDragGestures(
                 onDragStart = { tracker.resetTracking(); scope.launch { position.stop() } },
@@ -212,20 +226,24 @@ fun CoverFlowScreen(vm: MainViewModel) {
                     offsetPx = x,
                     distance = d,
                     flipped = flippedId == album.id,
+                    cassette = tapes,
                     vm = vm,
                     playingId = player.mediaId,
                     onTap = {
                         when {
-                            cdAlbumId != null -> Unit
+                            cdAlbumId != null || tapeAlbumId != null -> Unit
                             flippedId == album.id -> flippedId = null
-                            abs(d) < 0.5f -> { flippedId = null; settleTo(i); cdAlbumId = album.id }
+                            // Selon le réglage : platine CD, walkman, ou la pochette se retourne sur la liste (iOS 3).
+                            abs(d) < 0.5f && deckMode == DeckMode.CD -> { flippedId = null; settleTo(i); cdAlbumId = album.id }
+                            abs(d) < 0.5f && tapes -> { flippedId = null; settleTo(i); tapeAlbumId = album.id }
+                            abs(d) < 0.5f -> flippedId = album.id
                             else -> { flippedId = null; settleTo(i) }
                         }
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .offset(y = topOffset)
-                        .graphicsLayer { alpha = if (cdAlbumId == album.id) 0f else 1f - coverFade() },
+                        .graphicsLayer { alpha = if (cdAlbumId == album.id || tapeAlbumId == album.id) 0f else 1f - coverFade() },
                 )
             }
         }
@@ -233,7 +251,7 @@ fun CoverFlowScreen(vm: MainViewModel) {
 
         // Couche d'interface hors du fondu des bords (boutons et textes toujours nets).
         val center = position.value
-        if (cdAlbumId == null) Box(Modifier.fillMaxSize()) {
+        if (cdAlbumId == null && tapeAlbumId == null) Box(Modifier.fillMaxSize()) {
             // Coins bas : lecture/pause à gauche, « i » à droite (retourne la pochette centrale).
             IconButton(
                 onClick = { vm.player.togglePlay() },
@@ -282,6 +300,11 @@ fun CoverFlowScreen(vm: MainViewModel) {
                 CdPlayerScene(album, vm, cdProgress, cover, topOffset, onEjected = { cdAlbumId = null })
             }
         }
+        tapeAlbumId?.let { id -> albums.firstOrNull { it.id == id } }?.let { album ->
+            CompositionLocalProvider(LocalCoverPx provides coverDecodePx) {
+                WalkmanScene(album, vm, tapeProgress, onEjected = { tapeAlbumId = null })
+            }
+        }
     }
 }
 
@@ -292,6 +315,7 @@ private fun CoverItem(
     offsetPx: Float,
     distance: Float,
     flipped: Boolean,
+    cassette: Boolean,
     vm: MainViewModel,
     playingId: String?,
     onTap: () -> Unit,
@@ -315,13 +339,13 @@ private fun CoverItem(
     ) {
         Box(Modifier.size(size).clickable(interactionSource = noRipple, indication = null, onClick = onTap)) {
             if (flip <= 90f) {
-                Artwork(album.artworkPath, Modifier.fillMaxSize())
+                if (cassette) CassetteCard(album.artworkPath, Modifier.fillMaxSize()) else Artwork(album.artworkPath, Modifier.fillMaxSize())
             } else {
                 // Face arrière, contre-pivotée pour être lisible.
                 TrackListBack(album, vm, playingId, Modifier.fillMaxSize().graphicsLayer { rotationY = 180f })
             }
         }
-        if (flip <= 90f) Reflection(album.artworkPath, size)
+        if (flip <= 90f && !cassette) Reflection(album.artworkPath, size)
     }
 }
 

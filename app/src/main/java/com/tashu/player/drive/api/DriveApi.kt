@@ -6,10 +6,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.MediaType.Companion.toMediaType
-import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -126,51 +122,6 @@ class DriveApi @Inject constructor(
         execute(Request.Builder().url(mediaUrl(fileId)).build()).use { it.body!!.string() }
     }
 
-    // ---------------- Écriture (scope drive.file : uniquement ce que l'app a créé) ----------------
-
-    /** Dossier enfant portant exactement ce nom, ou null. `parentId = "root"` = Mon Drive. */
-    suspend fun findFolder(name: String, parentId: String): DriveFile? =
-        listQuery(
-            "name = '${escapeQuery(name)}' and '$parentId' in parents " +
-                "and mimeType = '$FOLDER_MIME' and trashed = false"
-        ).firstOrNull()
-
-    suspend fun createFolder(name: String, parentId: String): DriveFile = withContext(Dispatchers.IO) {
-        val meta = """{"name":${JsonPrimitive(name)},"mimeType":"$FOLDER_MIME","parents":["$parentId"]}"""
-        val url = "$BASE/files".toHttpUrl().newBuilder().addQueryParameter("fields", FILE_FIELDS).build()
-        execute(Request.Builder().url(url).post(meta.toRequestBody(JSON)).build()).use {
-            json.decodeFromString(DriveFile.serializer(), it.body!!.string())
-        }
-    }
-
-    suspend fun findOrCreateFolder(name: String, parentId: String): DriveFile =
-        findFolder(name, parentId) ?: createFolder(name, parentId)
-
-    /** Noms des fichiers déjà présents dans un dossier (pour ne pas renvoyer un morceau déjà importé). */
-    suspend fun childNames(folderId: String): Set<String> = listChildren(folderId).map { it.name }.toSet()
-
-    /**
-     * Envoi « resumable » : une requête de métadonnées (renvoie l'URL de session), puis le contenu.
-     * Convient aux fichiers de plusieurs dizaines de Mo.
-     */
-    suspend fun uploadFile(file: File, parentId: String, mimeType: String): DriveFile = withContext(Dispatchers.IO) {
-        val meta = """{"name":${JsonPrimitive(file.name)},"parents":["$parentId"]}"""
-        val start = "$UPLOAD/files".toHttpUrl().newBuilder()
-            .addQueryParameter("uploadType", "resumable")
-            .addQueryParameter("fields", FILE_FIELDS)
-            .build()
-        val session = execute(
-            Request.Builder().url(start)
-                .header("X-Upload-Content-Type", mimeType)
-                .header("X-Upload-Content-Length", file.length().toString())
-                .post(meta.toRequestBody(JSON))
-                .build()
-        ).use { it.header("Location") ?: throw IOException("Drive : URL d'envoi absente") }
-        execute(Request.Builder().url(session).put(file.asRequestBody(mimeType.toMediaType())).build()).use {
-            json.decodeFromString(DriveFile.serializer(), it.body!!.string())
-        }
-    }
-
     private suspend fun execute(base: Request): Response {
         var token = auth.accessToken()
         var resp = http.newCall(base.newBuilder().header("Authorization", "Bearer $token").build()).execute()
@@ -190,12 +141,8 @@ class DriveApi @Inject constructor(
 
     companion object {
         const val BASE = "https://www.googleapis.com/drive/v3"
-        const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
-        private val JSON = "application/json; charset=UTF-8".toMediaType()
         const val FOLDER_MIME = "application/vnd.google-apps.folder"
         private const val FILE_FIELDS = "id,name,mimeType,parents,size,md5Checksum,modifiedTime"
-        /** Échappement des valeurs dans une requête `q` Drive : antislash puis apostrophe. */
-        fun escapeQuery(v: String) = v.replace("\\", "\\\\").replace("'", "\\'")
         fun mediaUrl(fileId: String) = "$BASE/files/$fileId?alt=media&supportsAllDrives=true"
     }
 }

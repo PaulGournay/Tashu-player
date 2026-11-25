@@ -86,108 +86,13 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private val TABS = listOf("Albums", "Morceaux", "Dossiers", "Listes dynamiques")
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun LibraryScreen(
-    vm: MainViewModel,
-    onOpenAlbum: (Long) -> Unit,
-    onOpenPlayer: () -> Unit,
-    onManageFolders: () -> Unit,
-    onImport: () -> Unit = {},
-) {
-    val pager = rememberPagerState { TABS.size }
-    val scope = rememberCoroutineScope()
-    val scan by vm.scanProgress.collectAsStateWithLifecycle()
-    val playerState by vm.player.state.collectAsStateWithLifecycle()
-    val seed by rememberArtworkSeed(playerState.metadata.artworkUri?.path)
-    val theme by vm.themeSettings.collectAsStateWithLifecycle()
-    val drawer = rememberDrawerState(DrawerValue.Closed)
-    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
-
-    // La bibliothèque aussi prend la teinte de la pochette en cours.
-    TashuTheme(seed = seed) {
-        ModalNavigationDrawer(
-            drawerState = drawer,
-            // Glisser pour ouvrir entrerait en conflit avec le défilement des onglets : bouton ☰ seulement.
-            gesturesEnabled = drawer.isOpen,
-            drawerContent = {
-                AppDrawer(
-                    theme = theme,
-                    onThemeChange = vm::updateTheme,
-                    onLibrary = { scope.launch { drawer.close() } },
-                    onImport = { scope.launch { drawer.close() }; onImport() },
-                    onManageFolders = { scope.launch { drawer.close() }; onManageFolders() },
-                    onRescan = { scope.launch { drawer.close() }; vm.rescan() },
-                )
-            },
-        ) {
-            Scaffold(
-                topBar = {
-                    Column {
-                        TopAppBar(
-                            title = { Text("Bibliothèque") },
-                            navigationIcon = {
-                                IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Rounded.Menu, contentDescription = "Ouvrir le menu") }
-                            },
-                            actions = {
-                                if (pager.currentPage == 0) {
-                                    val columns by vm.albumGridColumns.collectAsStateWithLifecycle()
-                                    IconButton(onClick = vm::cycleAlbumGridColumns) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                if (columns == 1) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView,
-                                                contentDescription = "Albums par ligne : $columns, changer",
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                            Text("$columns", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 2.dp))
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = { vm.rescan() }) { Icon(Icons.Rounded.Refresh, contentDescription = "Rescanner Drive") }
-                                IconButton(onClick = onManageFolders) { Icon(Icons.Rounded.FolderOpen, contentDescription = "Dossiers Drive") }
-                            },
-                        )
-                        if (scan.running) {
-                            LinearProgressIndicator(Modifier.fillMaxWidth())
-                            Text(
-                                "Indexation : ${scan.filesIndexed + scan.filesSkipped} sur ${scan.filesFound} fichiers, ${scan.current.orEmpty()}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        PrimaryScrollableTabRow(selectedTabIndex = pager.currentPage, edgePadding = 16.dp) {
-                            TABS.forEachIndexed { i, t ->
-                                Tab(selected = pager.currentPage == i, onClick = { scope.launch { pager.animateScrollToPage(i) } }, text = { Text(t) })
-                            }
-                        }
-                    }
-                },
-                bottomBar = { if (playerState.mediaId != null) MiniPlayer(vm, onOpenPlayer) },
-            ) { padding ->
-                HorizontalPager(pager, Modifier.fillMaxSize().consumeWindowInsets(padding)) { page ->
-                    when (page) {
-                        0 -> AlbumsGrid(vm, padding, onOpenAlbum)
-                        1 -> TrackList(vm.tracks.collectAsStateWithLifecycle().value, padding, playerState.mediaId) { list, i -> vm.play(list, i) }
-                        2 -> FolderBrowser(vm, padding)
-                        3 -> SmartPlaylists(vm, padding)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AlbumsGrid(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: (Long) -> Unit) {
+internal fun AlbumsGrid(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: (Long) -> Unit) {
     val albums by vm.albums.collectAsStateWithLifecycle()
     val order by vm.albumSortOrder.collectAsStateWithLifecycle()
     val columns by vm.albumGridColumns.collectAsStateWithLifecycle()
     // Espacements et textes adaptés à la densité : à 8 par ligne, pochettes seules.
-    val gap = when (columns) { 8 -> 4.dp; 4 -> 8.dp; else -> 16.dp }
+    val gap = when { columns >= 6 -> 4.dp; columns >= 4 -> 8.dp; columns == 3 -> 12.dp; else -> 16.dp }
     if (albums.isEmpty()) {
         EmptyHint("Aucun album pour l'instant. L'indexation de vos dossiers Drive les fera apparaître ici.", padding)
         return
@@ -195,7 +100,7 @@ private fun AlbumsGrid(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: (
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         contentPadding = PaddingValues(
-            start = if (columns == 8) 8.dp else 16.dp, end = if (columns == 8) 8.dp else 16.dp,
+            start = if (columns >= 6) 8.dp else 16.dp, end = if (columns >= 6) 8.dp else 16.dp,
             top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 16.dp,
         ),
         horizontalArrangement = Arrangement.spacedBy(gap),
@@ -218,8 +123,8 @@ private fun AlbumsGrid(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: (
                         .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                 )
                 when {
-                    columns >= 8 -> Unit // pochettes seules
-                    columns == 4 -> Text(
+                    columns >= 5 -> Unit // pochettes seules
+                    columns >= 3 -> Text(
                         a.title, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 4.dp),
                     )
@@ -350,7 +255,7 @@ fun TrackList(tracks: List<Track>, padding: PaddingValues, playingId: String?, o
 
 /** Mode Fichiers : arborescence Drive telle qu'indexée. */
 @Composable
-private fun FolderBrowser(vm: MainViewModel, padding: PaddingValues) {
+internal fun FolderBrowser(vm: MainViewModel, padding: PaddingValues) {
     val stack = remember { mutableStateListOf<Pair<String, String>>() } // (id, nom)
     val currentId = stack.lastOrNull()?.first
     val roots by vm.rootFolders.collectAsStateWithLifecycle()
@@ -390,7 +295,7 @@ private fun FolderBrowser(vm: MainViewModel, padding: PaddingValues) {
 }
 
 @Composable
-private fun SmartPlaylists(vm: MainViewModel, padding: PaddingValues) {
+internal fun SmartPlaylists(vm: MainViewModel, padding: PaddingValues) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = padding) {
         MainViewModel.SMART_PRESETS.forEachIndexed { idx, (name, def) ->
             item(key = "smart$idx") {

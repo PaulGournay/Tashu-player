@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tashu.player.domain.model.Album
+import kotlinx.coroutines.flow.debounce
+import com.tashu.player.domain.model.Artist
 import com.tashu.player.domain.model.AlbumSort
 import com.tashu.player.domain.model.AlbumSortOrder
 import com.tashu.player.domain.model.sortedFor
@@ -65,12 +67,16 @@ class MainViewModel @Inject constructor(
         )
     }
 
+    /** Instant (uptimeMillis) où le lecteur a été réduit : le mini-lecteur y répond par un rebond. */
+    val miniPlayerLandedAt = MutableStateFlow(0L)
+    fun onPlayerCollapsed() { miniPlayerLandedAt.value = android.os.SystemClock.uptimeMillis() }
+
     val albumGridColumns: StateFlow<Int> = settings.albumGridColumns.stateIn(viewModelScope, SharingStarted.Eagerly, 2)
 
-    /** Cycle 2 → 4 → 8 → 1 → 2… */
+    /** Cycle 1 → 2 → 3 → … → 8 → 1… */
     fun cycleAlbumGridColumns() = viewModelScope.launch {
         settings.setAlbumGridColumns(
-            when (albumGridColumns.value) { 2 -> 4; 4 -> 8; 8 -> 1; else -> 2 }
+            albumGridColumns.value % 8 + 1
         )
     }
 
@@ -78,6 +84,29 @@ class MainViewModel @Inject constructor(
         settings.setAlbumSortOrder(albumSortOrder.value.let { it.copy(descending = !it.descending) })
     }
     val tracks: StateFlow<List<Track>> = library.tracks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val artists: StateFlow<List<Artist>> = library.artists().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // ---- Recherche (morceaux, albums, artistes ; sans accents ni majuscules) ----
+    val searchQuery = MutableStateFlow("")
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    val searchResults: StateFlow<SearchResults> = combine(
+        searchQuery.debounce(150), library.tracks(), library.albums(), library.artists(),
+    ) { q, allTracks, allAlbums, allArtists ->
+        val needle = q.normalizedForSearch()
+        if (needle.isBlank()) return@combine SearchResults()
+        fun hit(vararg fields: String?) = fields.any { it != null && it.normalizedForSearch().contains(needle) }
+        val coverByArtist = artistCovers(allAlbums, allTracks)
+        SearchResults(
+            query = q,
+            artists = allArtists.filter { hit(it.name) }.map { it to coverByArtist[it.name] },
+            albums = allAlbums.filter { hit(it.title, it.artist) },
+            tracks = allTracks.filter { hit(it.title, it.artist, it.album) },
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SearchResults())
+
+    /** Pochette représentative de chaque artiste (accueil, recherche). */
+    val artistCovers: StateFlow<Map<String, String?>> = combine(library.albums(), library.tracks()) { al, tr -> artistCovers(al, tr) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
@@ -211,4 +240,29 @@ private fun suggestMusicFolders(audio: List<DriveParents>, folders: List<DriveFi
         val folder = if (common.last() == rootId) DriveFile("root", "Mon Drive", DriveApi.FOLDER_MIME) else byId.getValue(common.last())
         FolderPickerViewModel.MusicFolder(folder, names.joinToString(" / "), members.size, members.sumOf { tracksPerFolder.getValue(it.key) })
     }.sortedBy { it.path.lowercase() }
+}
+
+
+data class SearchResults(
+    val query: String = "",
+    val artists: List<Pair<Artist, String?>> = emptyList(),
+    val albums: List<Album> = emptyList(),
+    val tracks: List<Track> = emptyList(),
+) {
+    val isEmpty get() = artists.isEmpty() && albums.isEmpty() && tracks.isEmpty()
+}
+
+/** Minuscules sans accents : « Élodie » et « elodie » se trouvent l'une l'autre. */
+internal fun String.normalizedForSearch(): String =
+    java.text.Normalizer.normalize(lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").trim()
+
+/**
+ * Pochette par artiste : son album le plus récent, sinon celle d'un morceau où il apparaît
+ * (artistes présents seulement en featuring ou sur des compilations).
+ */
+private fun artistCovers(albums: List<Album>, tracks: List<Track>): Map<String, String?> {
+    val m = HashMap<String, String?>()
+    albums.sortedByDescending { it.year ?: 0 }.forEach { if (it.artworkPath != null) m.putIfAbsent(it.artist, it.artworkPath) }
+    tracks.forEach { t -> if (t.artworkPath != null) m.putIfAbsent(t.artist, t.artworkPath) }
+    return m
 }

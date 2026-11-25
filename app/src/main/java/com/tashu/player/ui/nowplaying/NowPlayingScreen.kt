@@ -1,5 +1,26 @@
 package com.tashu.player.ui.nowplaying
 
+import com.tashu.player.ui.theme.MinimalBackground
+import com.tashu.player.ui.theme.isMinimal
+import com.tashu.player.ui.theme.GlassBackdrop
+import com.tashu.player.ui.theme.glassSource
+import com.tashu.player.ui.theme.liquidGlass
+import com.tashu.player.ui.theme.rememberGlassBackdrop
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.border
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.tashu.player.domain.model.ThemeMode
+import com.tashu.player.ui.theme.GlassBorder
+import com.tashu.player.ui.theme.GlassCircle
+import com.tashu.player.ui.theme.bubbleClickable
+import com.tashu.player.ui.theme.bubbleScale
+import com.tashu.player.ui.theme.LocalThemeSettings
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -116,18 +137,23 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
         modifier = modifier,
     )
 
+    val theme = LocalThemeSettings.current
+    val haze = rememberGlassBackdrop()
+    // Même esprit « Liquid Glass » que l'accueil : toujours sombre, pochette floutée en fond, commandes sur verre.
+    CompositionLocalProvider(LocalThemeSettings provides theme.copy(mode = ThemeMode.DARK)) {
     TashuTheme(seed = seed) {
-        Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize()) {
-                if (style == NowPlayingStyle.IMMERSIVE && artworkPath != null) ImmersiveBackdrop(artworkPath)
+        CompositionLocalProvider(LocalContentColor provides Color.White) {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                Box(Modifier.fillMaxSize().glassSource(haze)) { PlayerBackdrop(artworkPath) }
 
                 Column(
                     Modifier
                         .fillMaxSize()
                         .safeDrawingPadding()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 20.dp),
                 ) {
                     TopBar(
+                        haze = haze,
                         onClose = onClose,
                         album = state.metadata.albumTitle?.toString(),
                         onCycleStyle = { vm.setStyle(NowPlayingStyle.entries[(style.ordinal + 1) % NowPlayingStyle.entries.size]) },
@@ -143,8 +169,8 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
                             lyricsPanel(fullscreen = false, Modifier.fillMaxSize())
                         } else {
                             // Plus grand carré qui tient dans la zone restante (largeur ET hauteur).
-                            BoxWithConstraints(Modifier.fillMaxSize().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                                val scale = if (style == NowPlayingStyle.MINIMAL) 0.55f else 1f
+                            BoxWithConstraints(Modifier.fillMaxSize().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                val scale = when (style) { NowPlayingStyle.MINIMAL -> 0.55f; NowPlayingStyle.CLASSIC -> 0.86f; else -> 1f }
                                 // Toucher la pochette : elle se retourne sur le visualiseur (et inversement).
                                 FlippableArtwork(
                                     flipped = coverFlipped,
@@ -157,25 +183,29 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
                         }
                     }
 
-                    TitleBlock(state, style, rating, onRate = { vm.rate(it) })
-                    Spacer(Modifier.height(4.dp))
-                    SignalPath(state.audio)
-                    Spacer(Modifier.height(8.dp))
-                    SeekBar(state, onSeek = { vm.player.seekTo(it) })
-                    Transport(state, vm)
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                    // Panneau de commandes en verre dépoli.
+                    val panel = RoundedCornerShape(32.dp)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .liquidGlass(haze, corner = 32.dp, tint = Color.Black.copy(alpha = 0.18f), lens = 28.dp)
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
                     ) {
-                        IconToggleButton(checked = showLyrics, onCheckedChange = { showLyrics = it }) {
-                            Icon(
-                                Icons.Rounded.Lyrics, contentDescription = "Paroles",
-                                tint = if (showLyrics || lyrics.state is LyricsState.Found) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        IconButton(onClick = { showQueue = true }) {
-                            Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = "File d'attente")
+                        TitleBlock(state, style, rating, onRate = { vm.rate(it) })
+                        SignalPath(state.audio)
+                        Spacer(Modifier.height(10.dp))
+                        SeekBar(state, onSeek = { vm.player.seekTo(it) })
+                        Transport(state, vm)
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            GlassChip(
+                                icon = Icons.Rounded.Lyrics, label = "Paroles",
+                                active = showLyrics || lyrics.state is LyricsState.Found,
+                            ) { showLyrics = !showLyrics }
+                            GlassChip(icon = Icons.AutoMirrored.Rounded.QueueMusic, label = "File d'attente", active = false) { showQueue = true }
                         }
                     }
                 }
@@ -206,49 +236,76 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
             LyricsSearchSheet(search, onSearch = vm::runSearch, onPick = { vm.pick(it) }, onDismiss = vm::closeSearch)
         }
     }
-}
-
-@Composable
-private fun TopBar(onClose: () -> Unit, album: String?, onCycleStyle: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onClose) { Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Réduire le lecteur") }
-        Text(
-            album.orEmpty(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-        )
-        IconButton(onClick = onCycleStyle) { Icon(Icons.Rounded.Style, contentDescription = "Changer le style du lecteur") }
     }
 }
 
 @Composable
-private fun ImmersiveBackdrop(path: String) {
-    AsyncImage(
-        model = path, contentDescription = null, contentScale = ContentScale.Crop,
-        modifier = Modifier.fillMaxSize().then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(60.dp) else Modifier),
-    )
+private fun TopBar(haze: GlassBackdrop, onClose: () -> Unit, album: String?, onCycleStyle: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        GlassCircle(haze, Icons.Rounded.KeyboardArrowDown, "Réduire le lecteur", onClick = onClose)
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("EN LECTURE", fontSize = 10.sp, letterSpacing = 1.5.sp, color = Color.White.copy(alpha = 0.55f), fontWeight = FontWeight.SemiBold)
+            Text(
+                album.orEmpty(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        GlassCircle(haze, Icons.Rounded.Style, "Changer le style du lecteur", onClick = onCycleStyle)
+    }
+}
+
+/** Pochette en plein écran, très floutée et assombrie vers le bas : c'est elle que le verre laisse deviner. */
+@Composable
+private fun PlayerBackdrop(path: String?) {
+    if (isMinimal()) {
+        Box(Modifier.fillMaxSize().background(MinimalBackground))
+        return
+    }
+    if (path != null) {
+        AsyncImage(
+            model = path, contentDescription = null, contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().scale(1.3f).then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(36.dp) else Modifier),
+        )
+    }
     Box(
         Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), MaterialTheme.colorScheme.surface))
+            Brush.verticalGradient(
+                0f to MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                0.5f to Color.Black.copy(alpha = 0.45f),
+                1f to Color.Black.copy(alpha = 0.85f),
+            )
         )
     )
 }
 
 @Composable
 private fun Artwork(path: String?, modifier: Modifier) {
-    Surface(
-        shape = RoundedCornerShape(6.dp),
-        tonalElevation = 2.dp,
-        shadowElevation = 12.dp,
-        modifier = modifier,
+    val shape = RoundedCornerShape(20.dp)
+    Box(
+        modifier
+            .shadow(28.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.06f))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), shape),
     ) {
-        if (path != null) {
-            AsyncImage(model = path, contentDescription = "Pochette", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        } else {
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.secondaryContainer))
-        }
+        if (path != null) AsyncImage(model = path, contentDescription = "Pochette", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    }
+}
+
+/** Pastille en verre pour les actions secondaires (paroles, file d'attente). */
+@Composable
+private fun GlassChip(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .bubbleClickable(pressedScale = 0.92f, onClick = onClick)
+            .clip(CircleShape)
+            .background(if (active) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f))
+            .border(1.dp, GlassBorder, CircleShape)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.9f), modifier = Modifier.padding(start = 6.dp))
     }
 }
 
@@ -257,18 +314,19 @@ private fun TitleBlock(state: PlayerUiState, style: NowPlayingStyle, rating: Int
     val m = state.metadata
     // « J'aime » = note 5 (même convention que le cœur de l'écran album) ; le retirer remet 0.
     var liked by remember(rating) { mutableStateOf(rating >= 5) }
-    Row(Modifier.fillMaxWidth().padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
                 m.title?.toString().orEmpty(),
-                style = if (style == NowPlayingStyle.MINIMAL) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = if (style == NowPlayingStyle.MINIMAL) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             Text(
                 m.artist?.toString().orEmpty(),
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = Color.White.copy(alpha = 0.65f),
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -276,7 +334,7 @@ private fun TitleBlock(state: PlayerUiState, style: NowPlayingStyle, rating: Int
             Icon(
                 if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 contentDescription = if (liked) "Retirer des titres aimés" else "J'aime",
-                tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                tint = if (liked) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
             )
         }
     }
@@ -302,7 +360,7 @@ private fun SignalPath(a: AudioInfo) {
     // Discret par défaut : une ligne courte et pâle (format, fréquence, débit). Toucher = détail complet.
     var expanded by rememberSaveable { mutableStateOf(false) }
     val short = listOfNotNull(a.codec, a.sampleRateHz?.let(::khz), a.bitrateKbps?.let { "$it kb/s" }).joinToString("  ")
-    val faded = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    val faded = Color.White.copy(alpha = 0.4f)
     Column(
         Modifier
             .fillMaxWidth()
@@ -321,22 +379,35 @@ private fun SignalPath(a: AudioInfo) {
 private fun khz(hz: Int): String =
     if (hz % 1000 == 0) "${hz / 1000} kHz" else "%.1f kHz".format(hz / 1000f)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SeekBar(state: PlayerUiState, onSeek: (Long) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val duration = state.durationMs.coerceAtLeast(1)
     val fraction = dragging ?: (state.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+    val muted = Color.White.copy(alpha = 0.55f)
     Column {
-        if (state.isBuffering) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+        if (state.isBuffering) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Color.White, trackColor = Color.White.copy(alpha = 0.15f))
         Slider(
             value = fraction,
             onValueChange = { dragging = it },
             onValueChangeFinished = { dragging?.let { onSeek((it * duration).toLong()) }; dragging = null },
-            colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary),
+            modifier = Modifier.height(28.dp),
+            thumb = {
+                // Pastille discrète qui grossit quand on la saisit.
+                val d = if (dragging != null) 16.dp else 10.dp
+                Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(d).clip(CircleShape).background(Color.White)) }
+            },
+            track = { st ->
+                val f = (st.value - st.valueRange.start) / (st.valueRange.endInclusive - st.valueRange.start)
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f))) {
+                    Box(Modifier.fillMaxWidth(f).height(4.dp).background(Color.White))
+                }
+            },
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(fmt((fraction * duration).toLong()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("-" + fmt(duration - (fraction * duration).toLong()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(fmt((fraction * duration).toLong()), fontSize = 11.sp, color = muted)
+            Text("-" + fmt(duration - (fraction * duration).toLong()), fontSize = 11.sp, color = muted)
         }
     }
 }
@@ -355,16 +426,18 @@ private fun Transport(state: PlayerUiState, vm: NowPlayingViewModel) {
     ) {
         IconToggleButton(checked = state.shuffle, onCheckedChange = { vm.player.toggleShuffle() }) {
             Icon(Icons.Rounded.Shuffle, contentDescription = "Lecture aléatoire",
-                tint = if (state.shuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                tint = if (state.shuffle) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f))
         }
         IconButton(onClick = { vm.player.previous() }, modifier = Modifier.size(56.dp)) {
-            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Précédent", modifier = Modifier.size(36.dp))
+            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Précédent", tint = Color.White, modifier = Modifier.size(38.dp))
         }
+        val playSource = remember { MutableInteractionSource() }
         FilledIconButton(
             onClick = { vm.player.togglePlay() },
+            interactionSource = playSource,
             shape = CircleShape,
-            modifier = Modifier.size(76.dp).clip(CircleShape),
-            colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
+            modifier = Modifier.bubbleScale(playSource, 0.86f).size(72.dp).clip(CircleShape),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black),
         ) {
             Icon(
                 if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
@@ -373,13 +446,13 @@ private fun Transport(state: PlayerUiState, vm: NowPlayingViewModel) {
             )
         }
         IconButton(onClick = { vm.player.next() }, modifier = Modifier.size(56.dp)) {
-            Icon(Icons.Rounded.SkipNext, contentDescription = "Suivant", modifier = Modifier.size(36.dp))
+            Icon(Icons.Rounded.SkipNext, contentDescription = "Suivant", tint = Color.White, modifier = Modifier.size(38.dp))
         }
         IconButton(onClick = { vm.player.cycleRepeat() }) {
             Icon(
                 if (state.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                 contentDescription = "Répétition",
-                tint = if (state.repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (state.repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
             )
         }
     }

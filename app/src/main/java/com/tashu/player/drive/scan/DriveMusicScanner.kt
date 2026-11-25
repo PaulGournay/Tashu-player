@@ -92,7 +92,10 @@ class DriveMusicScanner @Inject constructor(
                 val subFolders = children.filter { it.mimeType == DriveApi.FOLDER_MIME }
                 val audio = children.filter { it.isAudio() }
                 val lrcByBase = children.filter { it.name.endsWith(".lrc", true) }.associateBy { it.name.substringBeforeLast('.').lowercase() }
-                val cover = children.firstOrNull { it.name.lowercase().substringBeforeLast('.') in COVER_NAMES && it.mimeType.startsWith("image/") }
+                val cover = children
+                    .filter { it.name.lowercase().substringBeforeLast('.') in COVER_NAMES && it.mimeType.startsWith("image/") }
+                    // cover.gif / cover.webp (souvent animées) passent devant cover.jpg.
+                    .minByOrNull { if (it.name.substringAfterLast('.', "").lowercase() in ANIMATED_EXT) 0 else 1 }
 
                 db.folderDao().upsert(listOf(FolderEntity(folder.id, folder.name, if (isRoot) null else folder.parents.firstOrNull(), isRoot, cover?.id, scanStart)))
                 subFolders.forEach { queue += it to false }
@@ -242,7 +245,8 @@ class DriveMusicScanner @Inject constructor(
         private const val PARALLEL_FILES = 6
         const val UNKNOWN_ARTIST = "Artiste inconnu"
         const val UNKNOWN_ALBUM = "Album inconnu"
-        private val COVER_NAMES = setOf("cover", "folder", "front", "album", "albumart")
+        private val COVER_NAMES = setOf("cover", "folder", "front", "album", "albumart", "foldercover", "thumbnail")
+        private val ANIMATED_EXT = setOf("gif", "webp", "png", "apng")
         private val KEYS = intArrayOf(
             MediaMetadataRetriever.METADATA_KEY_TITLE, MediaMetadataRetriever.METADATA_KEY_ARTIST,
             MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST, MediaMetadataRetriever.METADATA_KEY_ALBUM,
