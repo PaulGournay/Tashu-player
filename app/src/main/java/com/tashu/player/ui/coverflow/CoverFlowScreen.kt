@@ -129,7 +129,7 @@ fun CoverFlowScreen(vm: MainViewModel) {
     val coverFade = {
         when {
             cdAlbumId != null -> (cdProgress.value / 0.6f).coerceIn(0f, 1f)
-            tapeAlbumId != null -> (tapeProgress.value / 0.6f).coerceIn(0f, 1f)
+            tapeAlbumId != null -> (tapeProgress.value / TAPE_HANDOFF).coerceIn(0f, 1f)
             else -> 0f
         }
     }
@@ -168,8 +168,10 @@ fun CoverFlowScreen(vm: MainViewModel) {
         val topOffset: Dp = maxHeight * 0.06f
         val density = LocalDensity.current
         val coverPx = with(density) { cover.toPx() }
-        val centerGapPx = coverPx * 0.62f   // décalage pochette centrale -> première voisine
-        val stackGapPx = coverPx * 0.14f    // écart entre pochettes empilées
+        // Cassettes debout : moins larges qu'une pochette, les écarts suivent leur largeur.
+        val gapScale = if (tapes) 1f / CASSETTE_RATIO else 1f
+        val centerGapPx = coverPx * 0.62f * gapScale   // décalage pochette centrale -> première voisine
+        val stackGapPx = coverPx * 0.14f * gapScale    // écart entre pochettes empilées
         val dragUnitPx = coverPx * 0.40f    // glissement nécessaire pour avancer d'un album
 
         val dragModifier = Modifier.pointerInput(albums.size, flippedId, cdAlbumId, tapeAlbumId) {
@@ -197,7 +199,7 @@ fun CoverFlowScreen(vm: MainViewModel) {
             albums.mapNotNull { it.artworkPath }.forEach { loader.enqueue(coverRequest(context, it, coverDecodePx)) }
         }
 
-        CompositionLocalProvider(LocalCoverPx provides coverDecodePx) {
+        val carousel: @Composable () -> Unit = {
         Box(
             dragModifier
                 .fillMaxSize()
@@ -243,10 +245,24 @@ fun CoverFlowScreen(vm: MainViewModel) {
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .offset(y = topOffset)
-                        .graphicsLayer { alpha = if (cdAlbumId == album.id || tapeAlbumId == album.id) 0f else 1f - coverFade() },
+                        .graphicsLayer {
+                            // La cassette touchée reste là jusqu'à ce que sa jumelle 3D prenne le relais.
+                            alpha = when {
+                                cdAlbumId == album.id -> 0f
+                                tapeAlbumId == album.id -> if (tapeProgress.value >= TAPE_HANDOFF) 0f else 1f
+                                else -> 1f - coverFade()
+                            }
+                            // Les autres cassettes s'écartent en s'effaçant.
+                            if (tapeAlbumId != null) translationX = sign(d) * coverPx * 0.5f * coverFade()
+                        },
                 )
             }
         }
+        }
+        // La scène du walkman se dessine sous la fenêtre (le volet et les titres passent par-dessus) : pendant son départ,
+        // le carrousel est dessiné par la scène, au-dessus d'elle.
+        CompositionLocalProvider(LocalCoverPx provides coverDecodePx) {
+            if (tapeAlbumId == null) carousel()
         }
 
         // Couche d'interface hors du fondu des bords (boutons et textes toujours nets).
@@ -302,7 +318,13 @@ fun CoverFlowScreen(vm: MainViewModel) {
         }
         tapeAlbumId?.let { id -> albums.firstOrNull { it.id == id } }?.let { album ->
             CompositionLocalProvider(LocalCoverPx provides coverDecodePx) {
-                WalkmanScene(album, vm, tapeProgress, onEjected = { tapeAlbumId = null })
+                val index = albums.indexOf(album)
+                WalkmanScene(
+                    album, vm, tapeProgress, cover, topOffset,
+                    cardSettled = { abs(position.value - index) < 0.01f },
+                    carousel = carousel,
+                    onEjected = { tapeAlbumId = null },
+                )
             }
         }
     }
@@ -339,7 +361,7 @@ private fun CoverItem(
     ) {
         Box(Modifier.size(size).clickable(interactionSource = noRipple, indication = null, onClick = onTap)) {
             if (flip <= 90f) {
-                if (cassette) CassetteCard(album.artworkPath, Modifier.fillMaxSize()) else Artwork(album.artworkPath, Modifier.fillMaxSize())
+                if (cassette) CassetteCard(album, Modifier.fillMaxSize()) else Artwork(album.artworkPath, Modifier.fillMaxSize())
             } else {
                 // Face arrière, contre-pivotée pour être lisible.
                 TrackListBack(album, vm, playingId, Modifier.fillMaxSize().graphicsLayer { rotationY = 180f })

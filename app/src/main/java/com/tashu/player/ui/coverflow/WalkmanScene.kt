@@ -2,14 +2,10 @@ package com.tashu.player.ui.coverflow
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.LinearGradient
-import android.graphics.Paint
 import android.graphics.Rect
-import android.graphics.RectF
-import android.graphics.Shader
-import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -18,25 +14,32 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,31 +51,42 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.android.filament.Fence
 import com.google.android.filament.View
 import com.tashu.player.domain.model.Album
 import com.tashu.player.playback.MediaItemMapper
 import com.tashu.player.ui.MainViewModel
 import dev.romainguy.kotlin.math.Float2
+import dev.romainguy.kotlin.math.Float3
+import dev.romainguy.kotlin.math.Float4
+import dev.romainguy.kotlin.math.Mat4
+import dev.romainguy.kotlin.math.Quaternion
+import dev.romainguy.kotlin.math.dot
+import dev.romainguy.kotlin.math.inverse
+import dev.romainguy.kotlin.math.normalize
+import dev.romainguy.kotlin.math.rotation
+import dev.romainguy.kotlin.math.scale
+import dev.romainguy.kotlin.math.translation
 import io.github.sceneview.Scene
 import io.github.sceneview.SceneView
+import io.github.sceneview.collision.Box as CollisionBox
+import io.github.sceneview.collision.Vector3 as CollisionVector
 import io.github.sceneview.gesture.GestureDetector
 import io.github.sceneview.math.Position
 import io.github.sceneview.math.Rotation
@@ -83,14 +97,22 @@ import io.github.sceneview.rememberEngine
 import io.github.sceneview.rememberModelLoader
 import io.github.sceneview.rememberView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlinx.coroutines.withContext
-import java.io.File
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Walkman 3D (« Old Walkman », Charles48900, CC BY 4.0) avec la cassette (« Cassette tapes », FEDDYFAZBARE, CC BY 4.0)
@@ -102,163 +124,427 @@ internal const val WALKMAN_MODEL = "models/walkman.glb"
 internal fun walkmanModelAvailable(context: Context): Boolean =
     runCatching { context.assets.list("models")?.contains("walkman.glb") == true }.getOrDefault(false)
 
-/** Fin de l'animation : 0→1 entrée du walkman + ouverture, 1→2 la cassette entre, 2→3 fermeture et liste. */
-internal const val TAPE_LOADED = 3f
-private const val TAPE_LOAD_MS = 2600
-/** Ouverture maximale du couvercle (degrés). */
-private const val DOOR_OPEN_DEG = 62f
+/**
+ * Chronologie, en secondes (`progress` avance linéairement, chaque geste a sa propre courbe). D'abord [TAPE_HANDOFF] :
+ * les autres cassettes du carrousel s'écartent et s'effacent, puis la cassette 3D prend la place de la 2D. Ensuite, sur
+ * l'horloge de la scène : 0 → 0,9 le walkman entre par la droite, debout, et ouvre sa porte (0,35 → 0,95) ; 0 → 1,45 la
+ * cassette vient vers soi puis vole jusqu'au-dessus de la porte ; 1,45 → 1,85 elle glisse dans la porte ; 1,85 → 2,3 la
+ * porte se referme (rebond et clic) ; 2,25 → 3,1 le walkman se couche et remplit l'écran. La caméra suit la cassette.
+ */
+internal const val TAPE_HANDOFF = 0.35f
+private const val STAGE_END = 3.1f
+private const val CARD_FADE = 0.12f
+internal const val TAPE_LOADED = TAPE_HANDOFF + STAGE_END
+private const val TAPE_LOAD_MS = 3450
+private const val FLIGHT_END = 1.45f
+private const val SLIDE_END = 1.85f
+private const val CLOSE_END = 2.3f
+private const val LIE_START = 2.25f
+/** Instant où la porte claque (retour haptique, dans les deux sens). */
+private const val DOOR_SHUT = TAPE_HANDOFF + 2.13f
+/** Ouverture de la porte (degrés) et distance de glissement de la cassette dans la porte (mètres). */
+private const val DOOR_OPEN_DEG = 38f
+private const val SLIDE_IN = 0.12f
+
+/** Focale de la caméra (mm, capteur de 24 mm : champ vertical de 46°). */
+private const val FOCAL_MM = 28.0
+private const val TAN_HALF_FOV = (12.0 / FOCAL_MM).toFloat()
 
 /**
- * Scène walkman en paysage. Les autres cassettes s'effacent, le walkman entre par la droite et ouvre son couvercle,
- * la cassette (étiquette = pochette) y glisse, le couvercle se referme avec un petit rebond, puis la lecture démarre.
- * Retour / éjection : tout se rejoue à l'envers.
+ * Walkman plein écran en paysage. La cassette touchée devient la cassette 3D au même endroit, vole jusqu'au walkman qui
+ * arrive debout, s'y range, puis le walkman se couche et remplit l'écran. Ses commandes : touche orange = lecture / pause,
+ * glisser à gauche / à droite = piste suivante / précédente, toucher la porte = éjecter. La liste des titres se tire du bord
+ * gauche. Retour / éjection : tout se rejoue à l'envers jusqu'à la place de la cassette dans le carrousel.
  */
 @Composable
 internal fun WalkmanScene(
     album: Album,
     vm: MainViewModel,
     progress: Animatable<Float, AnimationVector1D>,
+    coverSize: Dp,
+    coverTop: Dp,
+    cardSettled: () -> Boolean,
+    carousel: @Composable () -> Unit,
     onEjected: () -> Unit,
 ) {
     val player by vm.player.state.collectAsStateWithLifecycle()
     val tracks by remember(album.id) { vm.albumTracks(album.id) }.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
+    val hostView = LocalView.current
     var ejecting by remember { mutableStateOf(false) }
+    var sceneOn by remember { mutableStateOf(false) }
+    var ready by remember { mutableStateOf(false) }
     val playingAlbumId by rememberUpdatedState(player.metadata.extras?.getLong(MediaItemMapper.EXTRA_ALBUM_ID, -1L))
+    val loaded by remember { derivedStateOf { progress.value >= TAPE_LOADED } }
 
+    // Tout de suite, les autres cassettes s'écartent ; puis la scène 3D se charge (le chargement du modèle bloque l'affichage
+    // un instant), la cassette du carrousel restant affichée tant que sa jumelle 3D n'est pas à l'écran au même endroit.
     LaunchedEffect(album.id) {
-        progress.snapTo(0f)
-        progress.animateTo(TAPE_LOADED, tween(TAPE_LOAD_MS, easing = LinearEasing))
+        progress.animateTo(TAPE_HANDOFF, tween((TAPE_HANDOFF * 1000).roundToInt(), easing = LinearEasing))
+        sceneOn = true
+    }
+    LaunchedEffect(album.id, ready) {
+        if (!ready) return@LaunchedEffect
+        snapshotFlow { cardSettled() }.first { it }
+        if (!ejecting) progress.animateTo(TAPE_LOADED, tween((STAGE_END * 1000).roundToInt(), easing = LinearEasing))
     }
     LaunchedEffect(album.id, tracks.isNotEmpty()) {
         if (tracks.isEmpty()) return@LaunchedEffect
         snapshotFlow { progress.value >= TAPE_LOADED }.first { it }
         if (!ejecting && playingAlbumId != album.id) vm.play(tracks, 0)
     }
+    LaunchedEffect(Unit) {
+        snapshotFlow { progress.value >= DOOR_SHUT }.distinctUntilChanged().drop(1).collect {
+            hostView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+    }
+
+    val drawer = remember { Animatable(0f) }
+    fun settleDrawer(open: Boolean) {
+        scope.launch { drawer.animateTo(if (open) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)) }
+    }
 
     fun eject() {
         if (ejecting) return
         ejecting = true
+        settleDrawer(false)
         if (player.isPlaying) vm.player.togglePlay()
         scope.launch {
-            progress.animateTo(0f, tween((TAPE_LOAD_MS * progress.value / TAPE_LOADED).roundToInt(), easing = LinearEasing))
+            progress.animateTo(0f, tween((TAPE_LOAD_MS * 0.85f * progress.value / TAPE_LOADED).roundToInt(), easing = LinearEasing))
             onEjected()
         }
     }
     BackHandler { eject() }
+    val drawerShown by remember { derivedStateOf { drawer.value > 0f || drawer.targetValue > 0f } }
+    BackHandler(enabled = drawerShown) { settleDrawer(false) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
-        val toDp = { v: Float -> with(density) { v.toDp() } }
-        val p = progress.value
-        val a = FastOutSlowInEasing.transform(p.coerceIn(0f, 1f))
-        val insert = (p - 1f).coerceIn(0f, 1f)
-        val close = (p - 2f).coerceIn(0f, 1f)
-        val panelW = w * 0.36f
-        val rightW = w - panelW
-        val stageH = h * 0.84f
+        val coverPx = with(density) { coverSize.toPx() }
+        val card = CardRect(cx = w / 2f, cy = with(density) { coverTop.toPx() } + coverPx / 2f, height = coverPx, viewW = w, viewH = h)
+        val controls = loaded && !ejecting
 
-        Walkman3D(
-            appear = a,
-            door = when {
-                p < 1f -> FastOutSlowInEasing.transform(((p - 0.35f) / 0.65f).coerceIn(0f, 1f))
-                p < 2f -> 1f
-                else -> 1f - doorCloseEase(close)
-            },
-            insert = FastOutSlowInEasing.transform(insert),
-            spinning = player.isPlaying && p >= TAPE_LOADED,
+        if (sceneOn) Walkman3D(
+            progress = progress,
+            card = card,
+            spinning = player.isPlaying && loaded,
             artworkPath = album.artworkPath,
             title = album.title,
             artist = album.artist,
-            controlsEnabled = p >= TAPE_LOADED && !ejecting,
+            controlsEnabled = controls,
+            onReady = { ready = true },
             onPlayButton = { vm.player.togglePlay() },
-            modifier = Modifier
-                .offset { IntOffset(panelW.roundToInt(), 0) }
-                .size(toDp(rightW), toDp(stageH)),
+            onDoor = ::eject,
+            onNext = { vm.player.next() },
+            onPrevious = { vm.player.previous() },
+            modifier = Modifier.fillMaxSize(),
         )
 
-        val d = FastOutSlowInEasing.transform(close)
-        if (d > 0f) {
-            TrackPanel(
-                album = album,
-                tracks = tracks,
-                playingId = player.mediaId,
-                headerSpace = with(density) { 72.dp.toPx() },
-                onPlay = { vm.play(tracks, it) },
-                modifier = Modifier
-                    .zIndex(1.5f)
-                    .width(toDp(panelW))
-                    .fillMaxHeight()
-                    .graphicsLayer { alpha = d; translationX = -(1f - d) * panelW * 0.25f },
-            )
-            // Vignette de l'en-tête : une petite cassette à la place de la pochette.
+        // Le carrousel, par-dessus la scène, le temps que les autres cassettes s'écartent ; puis une copie de la cassette
+        // touchée s'efface en 120 ms sur la cassette 3D placée exactement au même endroit.
+        val carouselShown by remember { derivedStateOf { progress.value < TAPE_HANDOFF } }
+        if (carouselShown) carousel()
+        val cardShown by remember { derivedStateOf { progress.value < TAPE_HANDOFF + CARD_FADE } }
+        if (cardShown) {
             CassetteCard(
-                album.artworkPath,
+                album,
                 Modifier
-                    .zIndex(2f)
-                    .offset(20.dp, 20.dp)
-                    .size(72.dp)
-                    .graphicsLayer { alpha = d },
+                    .offset { IntOffset(((w - coverPx) / 2f).roundToInt(), (card.cy - coverPx / 2f).roundToInt()) }
+                    .size(coverSize)
+                    .graphicsLayer { alpha = 1f - ((progress.value - TAPE_HANDOFF) / CARD_FADE).coerceIn(0f, 1f) },
             )
-            val current = tracks.firstOrNull { it.id == player.mediaId }
+        }
+
+        // Titre en cours, quelques secondes à chaque changement de piste.
+        var toast by remember { mutableStateOf(false) }
+        LaunchedEffect(player.mediaId, loaded) {
+            if (!loaded || player.mediaId == null) return@LaunchedEffect
+            toast = true
+            delay(3000)
+            toast = false
+        }
+        val toastAlpha by animateFloatAsState(if (toast && !ejecting) 1f else 0f, tween(if (toast) 250 else 700), label = "toast")
+        val current = tracks.firstOrNull { it.id == player.mediaId }
+        if (toastAlpha > 0f && current != null) {
             Column(
                 Modifier
-                    .offset { IntOffset(panelW.roundToInt(), (stageH - with(density) { 40.dp.toPx() }).roundToInt()) }
-                    .width(toDp(rightW))
-                    .graphicsLayer { alpha = d },
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 14.dp)
+                    .widthIn(max = 420.dp)
+                    .graphicsLayer { alpha = toastAlpha; translationY = (1f - toastAlpha) * 12.dp.toPx() }
+                    .background(Color(0xCC0E0E11), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 18.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(current?.title.orEmpty(), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(current?.artist.orEmpty(), color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(current.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                Text(current.artist, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
             }
         }
-        ControlStrip(
-            playing = player.isPlaying,
-            enabled = p >= TAPE_LOADED && !ejecting,
-            onPrevious = { vm.player.previous() },
-            onPlayPause = { vm.player.togglePlay() },
-            onStop = { if (player.isPlaying) vm.player.togglePlay(); vm.player.seekTo(0) },
-            onNext = { vm.player.next() },
-            onEject = ::eject,
-            ejectLabel = "Éjecter la cassette",
-            modifier = Modifier
-                .offset { IntOffset(panelW.roundToInt(), stageH.roundToInt()) }
-                .size(toDp(rightW), toDp(h - stageH))
-                .graphicsLayer { alpha = a },
-        )
+
+        // ---- Volet des titres, tiré depuis le bord gauche ----
+        val panelW = minOf(w * 0.42f, with(density) { 400.dp.toPx() })
+        val dragDrawer = Modifier.pointerInput(panelW) {
+            val tracker = VelocityTracker()
+            detectHorizontalDragGestures(
+                onDragStart = { tracker.resetTracking(); scope.launch { drawer.stop() } },
+                onDragEnd = {
+                    val v = tracker.calculateVelocity().x
+                    settleDrawer(if (abs(v) > 600f) v > 0f else drawer.value > 0.5f)
+                },
+                onDragCancel = { settleDrawer(drawer.value > 0.5f) },
+            ) { change, dx ->
+                tracker.addPosition(change.uptimeMillis, change.position)
+                scope.launch { drawer.snapTo((drawer.value + dx / panelW).coerceIn(0f, 1f)) }
+            }
+        }
+        if (controls) {
+            // Poignée : zone exclue du geste « retour » du système, sinon le glissement depuis le bord éjecterait.
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .size(32.dp, 200.dp)
+                    .systemGestureExclusion()
+                    .then(dragDrawer)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { settleDrawer(true) },
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterStart)
+                        .offset(x = 6.dp)
+                        .size(5.dp, 56.dp)
+                        .graphicsLayer { alpha = 1f - drawer.value }
+                        .background(Color.White.copy(alpha = 0.45f), RoundedCornerShape(3.dp)),
+                )
+            }
+        }
+        if (drawerShown) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = drawer.value }
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .pointerInput(Unit) { detectTapGestures { settleDrawer(false) } }
+                    .then(dragDrawer),
+            )
+            val thumb = with(density) { 72.dp.toPx() }
+            Box(
+                Modifier
+                    .width(with(density) { panelW.toDp() })
+                    .fillMaxHeight()
+                    .graphicsLayer { translationX = -(1f - drawer.value) * panelW }
+                    .shadow(16.dp)
+                    .background(Color(0xFF101013))
+                    .then(dragDrawer),
+            ) {
+                TrackPanel(
+                    album = album,
+                    tracks = tracks,
+                    playingId = player.mediaId,
+                    headerSpace = thumb,
+                    onPlay = { vm.play(tracks, it); settleDrawer(false) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Artwork(album.artworkPath, Modifier.offset(20.dp, 20.dp).size(72.dp).clip(RoundedCornerShape(4.dp)))
+            }
+        }
     }
 }
 
-/** Fermeture du couvercle : rapide, avec un petit rebond amorti en fin de course. */
+/** Place et taille (px) de la cassette du carrousel, dans une vue de [viewW] × [viewH] px. */
+private data class CardRect(val cx: Float, val cy: Float, val height: Float, val viewW: Float, val viewH: Float)
+
+/** Fermeture de la porte : rapide, avec un petit rebond amorti en fin de course. */
 private fun doorCloseEase(t: Float): Float {
     if (t <= 0f) return 0f
     if (t >= 1f) return 1f
     val base = FastOutSlowInEasing.transform((t / 0.7f).coerceIn(0f, 1f))
     val tail = ((t - 0.55f) / 0.45f).coerceIn(0f, 1f)
-    // léger rebond : le couvercle se rouvre de quelques degrés puis se rabat.
+    // léger rebond : la porte se rouvre de quelques degrés puis se rabat.
     return base - 0.06f * sin(tail * PI.toFloat() * 2f) * exp(-3f * tail) * (if (t > 0.55f) 1f else 0f)
 }
 
+private fun seg(p: Float, a: Float, b: Float) = ((p - a) / (b - a)).coerceIn(0f, 1f)
+private fun smooth(x: Float) = x.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+private fun smoother(x: Float) = x.coerceIn(0f, 1f).let { it * it * it * (it * (it * 6f - 15f) + 10f) }
+private fun ease(x: Float) = FastOutSlowInEasing.transform(x.coerceIn(0f, 1f))
+private fun mix(a: Float3, b: Float3, t: Float) = a + (b - a) * t
+private fun softMax(a: Float, b: Float) = (a + b + sqrt((a - b) * (a - b) + 1e-4f)) / 2f
+private fun softMin(a: Float, b: Float) = (a + b - sqrt((a - b) * (a - b) + 1e-4f)) / 2f
+private fun bezier(a: Float3, b: Float3, c: Float3, d: Float3, t: Float): Float3 {
+    val u = 1f - t
+    return a * (u * u * u) + b * (3f * u * u * t) + c * (3f * u * t * t) + d * (t * t * t)
+}
+private fun axisAngle(axis: Float3, degrees: Float) = Quaternion.fromAxisAngle(axis, degrees)
+private val AXIS_Y = Float3(0f, 1f, 0f)
+private val AXIS_Z = Float3(0f, 0f, 1f)
+
+private fun slerpShortest(a: Quaternion, b0: Quaternion, t: Float): Quaternion {
+    var b = b0
+    var d = dot(a, b)
+    if (d < 0f) { b = -b; d = -d }
+    if (d > 0.9995f) return normalize(a + (b - a) * t)
+    val th = acos(d)
+    val s = sin(th)
+    return a * (sin((1f - t) * th) / s) + b * (sin(t * th) / s)
+}
+
+/** Courbe lisse (Hermite, tangentes de Catmull-Rom) passant par des clés (temps, valeur), à pente nulle aux extrémités. */
+private class Keys(vararg keys: Pair<Float, Float>) {
+    private val t = keys.map { it.first }
+    private val v = keys.map { it.second }
+    private val m = List(keys.size) { i ->
+        if (i == 0 || i == keys.lastIndex) 0f else (v[i + 1] - v[i - 1]) / (t[i + 1] - t[i - 1])
+    }
+
+    fun at(p: Float): Float {
+        if (p <= t.first()) return v.first()
+        if (p >= t.last()) return v.last()
+        var i = 0
+        while (p > t[i + 1]) i++
+        val dt = t[i + 1] - t[i]
+        val s = (p - t[i]) / dt
+        val s2 = s * s
+        val s3 = s2 * s
+        return (2 * s3 - 3 * s2 + 1) * v[i] + (s3 - 2 * s2 + s) * dt * m[i] + (-2 * s3 + 3 * s2) * v[i + 1] + (s3 - s2) * dt * m[i + 1]
+    }
+}
+
 /**
- * Walkman 3D. @param appear entrée par la droite (0..1) ; @param door ouverture du couvercle (0..1) ;
- * @param insert 0 = cassette dehors, 1 = rangée ; @param spinning les moyeux tournent (lecture).
- * Toucher le walkman enfonce la touche orange (lecture / pause).
+ * Mise en scène, en mètres, repère du monde (Y en haut, la caméra regarde vers -Z au départ).
+ * Le modèle est debout face +X : un quart de tour autour de Y le tourne vers la caméra ; couché = encore un quart de tour
+ * (sens horaire à l'écran) autour de Z, l'étiquette de la cassette se retrouve alors à l'endroit.
+ */
+private class WalkmanStage(
+    card: CardRect,
+    private val rigPos: Float3,
+    private val rigQ: Quaternion,
+    private val rigScale: Float3,
+    private val hinge: Float3,
+    private val center: Float3,
+    halfExtent: Float3,
+) {
+    private val qStand = axisAngle(AXIS_Y, -90f)
+    private val qLie = axisAngle(AXIS_Z, -90f) * qStand
+    private val recvPos = Float3(0.085f, -0.01f, -0.05f)
+    private val entryOffset = Float3(0.36f, -0.03f, -0.08f)
+    private val recvYaw = -24f
+    private val entryYaw = -50f
+    private val rigBase = translation(rigPos) * rotation(rigQ) * scale(rigScale)
+
+    // Départ : la cassette 3D se projette exactement sur la cassette du carrousel (face avant dans le plan z = 0).
+    private val cassetteLength = 0.1016f * rigScale.x
+    private val d0 = cassetteLength * card.viewH / (2f * TAN_HALF_FOV * card.height)
+    private val metersPerPx = 2f * d0 * TAN_HALF_FOV / card.viewH
+    private val cardPos = Float3((card.cx - card.viewW / 2f) * metersPerPx, (card.viewH / 2f - card.cy) * metersPerPx, -0.0053f * rigScale.z)
+    private val cardQ = qStand * rigQ
+
+    // Arrivée : le walkman couché remplit la hauteur de l'écran (petites marges), légèrement vu de droite.
+    private val finalDistance = (2f * halfExtent.z) / 0.92f / (2f * TAN_HALF_FOV) + halfExtent.x
+    private val az = Keys(0f to 0f, 0.8f to -12f, 1.7f to -16f, 2.3f to -6f, STAGE_END to 5f)
+    private val el = Keys(0f to 0f, 0.8f to 4f, 1.7f to 12f, 2.3f to 8f, STAGE_END to 4f)
+    private val dist = Keys(0f to d0, 0.8f to 0.28f, 1.7f to 0.215f, 2.3f to 0.20f, STAGE_END to finalDistance)
+
+    var modelQ: Quaternion = qStand
+        private set
+
+    fun model(p: Float): Mat4 {
+        val a = ease(seg(p, 0f, 0.9f))
+        val lie = smoother(seg(p, LIE_START, STAGE_END))
+        val q = slerpShortest(axisAngle(AXIS_Y, recvYaw + (1f - a) * entryYaw) * qStand, qLie, lie)
+        modelQ = q
+        return translation(recvPos + entryOffset * (1f - a)) * rotation(q) * translation(-center)
+    }
+
+    fun warmUp(): Mat4 = translation(cardPos + Float3(0f, 0f, -0.03f)) * rotation(qStand) * scale(Float3(0.2f)) * translation(-center)
+
+    fun doorDegrees(p: Float) =
+        if (p < FLIGHT_END) DOOR_OPEN_DEG * smooth(seg(p, 0.35f, 0.95f))
+        else DOOR_OPEN_DEG * (1f - doorCloseEase(seg(p, SLIDE_END, CLOSE_END)))
+
+    private fun slide(p: Float) = SLIDE_IN * (1f - ease(seg(p, FLIGHT_END, SLIDE_END)))
+
+    /** Cassette dans la porte (repère du modèle) : porte ouverte de [deg], cassette sortie de [s] le long de la porte. */
+    private fun inDoor(deg: Float, s: Float) =
+        translation(hinge) * rotation(axisAngle(AXIS_Z, -deg)) * translation(-hinge) * translation(Float3(0f, s, 0f)) * rigBase
+
+    /** Transformation locale du nœud CassetteRig (relative au modèle de matrice [model]). */
+    fun cassetteLocal(p: Float, model: Mat4): Mat4 {
+        if (p >= FLIGHT_END) return inDoor(doorDegrees(p), slide(p))
+        return inverse(model) * cassetteWorldInFlight(p, model)
+    }
+
+    private fun cassetteWorldInFlight(p: Float, model: Mat4): Mat4 {
+        val pre = model * inDoor(DOOR_OPEN_DEG, SLIDE_IN)
+        val prePos = (pre * Float4(0f, 0f, 0f, 1f)).xyz
+        val preQ = modelQ * axisAngle(AXIS_Z, -DOOR_OPEN_DEG) * rigQ
+        val f = smoother(seg(p, 0.05f, FLIGHT_END))
+        val fr = smoother(seg(p, 0.2f, 1.35f))
+        // Prise en main : la cassette vient vers soi en s'inclinant un peu, puis repart.
+        val lift = ease(seg(p, 0f, 0.3f)) * (1f - smooth(seg(p, 0.3f, 0.9f)))
+        val pos = bezier(cardPos, cardPos + Float3(0.02f, 0.012f, 0.03f), prePos + Float3(-0.02f, 0.05f, 0.02f), prePos, f) +
+            Float3(0f, -0.004f, 0.012f) * lift
+        val q = axisAngle(Float3(1f, 0f, 0f), 8f * lift) * slerpShortest(cardQ, preQ, fr)
+        return translation(pos) * rotation(q) * scale(rigScale)
+    }
+
+    private fun cassettePosition(p: Float): Float3 {
+        val q = p.coerceAtLeast(0f)
+        val m = model(q)
+        val world = if (q >= FLIGHT_END) m * inDoor(doorDegrees(q), slide(q)) else cassetteWorldInFlight(q, m)
+        return (world * Float4(0f, 0f, 0f, 1f)).xyz
+    }
+
+    /** Œil et cible de la caméra. Elle suit la cassette avec un retard amorti, puis se cale face au walkman couché. */
+    fun camera(p: Float, timeSeconds: Double): Pair<Position, Position> {
+        val follow = cassettePosition(p - 0.1f) * 0.4f + cassettePosition(p - 0.22f) * 0.3f +
+            cassettePosition(p - 0.35f) * 0.2f + cassettePosition(p - 0.5f) * 0.1f
+        val weight = smooth(seg(p, 0f, 0.6f)) * (1f - smooth(seg(p, 2.1f, 2.8f)))
+        val base = recvPos * smooth(seg(p, 2.1f, STAGE_END))
+        // En vol, surtout la cassette ; à la fermeture, surtout le walkman.
+        val onWalkman = 0.45f + 0.3f * smooth(seg(p, 1.5f, 2.1f))
+        val target = mix(base, mix(follow, recvPos, onWalkman), weight)
+        val d = dist.at(p)
+        // En vol, la cassette reste dans l'image : la cible remonte (ou descend) si elle allait sortir par le haut (le bas).
+        val cassetteY = cassettePosition(p).y
+        val inFrame = smooth(seg(p, 0.05f, 0.4f)) * (1f - smooth(seg(p, 1.5f, 1.9f)))
+        val framedY = softMin(softMax(target.y, cassetteY + 0.07f - 0.7f * d * TAN_HALF_FOV), cassetteY - 0.07f + 0.7f * d * TAN_HALF_FOV)
+        target.y += (framedY - target.y) * inFrame
+        // Une fois couché, un très léger balancement garde le relief vivant.
+        val sway = smooth(seg(p, 2.7f, STAGE_END))
+        val a = Math.toRadians(az.at(p) + sway * 0.9 * sin(timeSeconds * 0.23)).toFloat()
+        val e = Math.toRadians(el.at(p) + sway * 0.6 * sin(timeSeconds * 0.19)).toFloat()
+        val eye = target + Float3(sin(a) * cos(e), sin(e), cos(a) * cos(e)) * d
+        return eye to target
+    }
+
+    init {
+        model(0f)
+    }
+}
+
+/**
+ * Scène 3D plein écran (sous l'interface : le volet et le titre se dessinent par-dessus). Toute l'animation est calculée
+ * à chaque image depuis [progress], sans recomposition. Commandes du modèle actives quand [controlsEnabled].
  */
 @Composable
 private fun Walkman3D(
-    appear: Float,
-    door: Float,
-    insert: Float,
+    progress: Animatable<Float, AnimationVector1D>,
+    card: CardRect,
     spinning: Boolean,
     artworkPath: String?,
     title: String,
     artist: String,
     controlsEnabled: Boolean,
+    onReady: () -> Unit,
     onPlayButton: () -> Unit,
+    onDoor: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
     modifier: Modifier,
 ) {
+    val context = LocalContext.current
     val hostView = LocalView.current
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
@@ -272,55 +558,113 @@ private fun Walkman3D(
             dithering = View.Dithering.TEMPORAL
         }
     }
-    val cameraNode = rememberCameraNode(engine) {
-        position = Position(0.07f, 0.03f, 0.30f)
-        lookAt(Position(0f, -0.004f, 0f))
-    }
+    val cameraNode = rememberCameraNode(engine) { focalLength = FOCAL_MM }
     val model = remember(modelLoader) {
         ModelNode(modelInstance = modelLoader.createModelInstance(WALKMAN_MODEL), autoAnimate = false).apply {
-            isTouchable = true
+            // Seules la touche orange et la porte reçoivent les touchers (boîtes englobantes, la touche agrandie).
+            isTouchable = false
+            collisionShape = null
+            renderableNodes.filter { it.name == "BtnPlay" || it.name == "Door" }.forEach { node ->
+                val box = node.axisAlignedBoundingBox
+                val grow = if (node.name == "BtnPlay") 1.8f else 1f
+                node.collisionShape = CollisionBox(
+                    CollisionVector(box.halfExtent[0] * 2f * grow, box.halfExtent[1] * 2f * grow, box.halfExtent[2] * 2f * grow),
+                    CollisionVector(box.center[0], box.center[1], box.center[2]),
+                )
+                node.isTouchable = true
+            }
         }
     }
-    val doorNode = remember(model) { model.nodes.firstOrNull { it.name == "Door" } }
-    val rig = remember(model) { model.nodes.firstOrNull { it.name == "CassetteRig" } }
+    val doorNode = remember(model) { model.nodes.first { it.name == "Door" } }
+    val rig = remember(model) { model.nodes.first { it.name == "CassetteRig" } }
     val hubs = remember(model) { model.nodes.filter { it.name == "HubL" || it.name == "HubR" } }
     val hubBase = remember(hubs) { hubs.associateWith { it.rotation } }
-    val btn = remember(model) { model.nodes.firstOrNull { it.name == "BtnPlay" } }
-    val btnBase = remember(btn) { btn?.position }
-    val rigBase = remember(rig) { rig?.position }
-    val label = remember(model) { model.renderableNodes.firstOrNull { it.name == "Label" } }
+    val btn = remember(model) { model.nodes.first { it.name == "BtnPlay" } }
+    val btnBase = remember(btn) { btn.position }
+    val label = remember(model) { model.renderableNodes.first { it.name == "Label" } }
+    val stage = remember(model, card) {
+        val bounds = model.modelInstance.asset.boundingBox
+        WalkmanStage(
+            card = card,
+            rigPos = rig.position,
+            rigQ = rig.quaternion,
+            rigScale = rig.scale,
+            hinge = doorNode.position,
+            center = Float3(bounds.center[0], bounds.center[1], bounds.center[2]),
+            halfExtent = Float3(bounds.halfExtent[0], bounds.halfExtent[1], bounds.halfExtent[2]),
+        )
+    }
 
     val labelTexture = remember { TextureSlot(engine) }
-    LaunchedEffect(artworkPath, label) {
-        val bmp = withContext(Dispatchers.Default) { cassetteLabel(artworkPath, title, artist) }
-        label?.materialInstance?.let { labelTexture.set(it, bmp, "baseColorMap") }
+    var labelReady by remember { mutableStateOf(false) }
+    LaunchedEffect(artworkPath, title, artist) {
+        val bmp = withContext(Dispatchers.Default) { cassetteLabel(context, artworkPath, title, artist, 1536) }
+        labelTexture.set(label.materialInstance, bmp, "baseColorMap")
+        // Papier mat : moins de reflet blanc sur la pochette (elle reste fidèle à ses couleurs).
+        label.materialInstance.setParameter("roughnessFactor", 0.9f)
+        labelReady = true
     }
-    DisposableEffect(engine) { onDispose { labelTexture.release() } }
+    // Prête quand une image avec l'étiquette est vraiment sortie du GPU.
+    var sceneView by remember { mutableStateOf<SceneView?>(null) }
+    var readyFence by remember { mutableStateOf<Fence?>(null) }
+    var readyState by remember { mutableStateOf(0) }
+    DisposableEffect(engine) { onDispose { readyFence?.let(engine::destroyFence); labelTexture.release() } }
+    // Puis attendre que la cassette soit réellement à l'écran : l'affichage d'une SurfaceView suit le GPU avec retard.
+    LaunchedEffect(readyState == 2) {
+        if (readyState != 2) return@LaunchedEffect
+        val surface = sceneView ?: return@LaunchedEffect
+        val probe = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+        val x = card.cx.roundToInt()
+        val y = card.cy.roundToInt()
+        val area = Rect(x - 4, y - 4, x + 4, y + 4)
+        val main = Handler(Looper.getMainLooper())
+        while (true) {
+            val result = suspendCancellableCoroutine { cont -> PixelCopy.request(surface, area, probe, { cont.resume(it) }, main) }
+            if (result == PixelCopy.SUCCESS && android.graphics.Color.alpha(probe.getPixel(4, 4)) > 0) break
+            delay(40)
+        }
+        probe.recycle()
+        readyState = 3
+        onReady()
+    }
 
     var pressedAt by remember { mutableStateOf(0L) }
+    var boostUntil by remember { mutableStateOf(0L) }
+    var boostDir by remember { mutableStateOf(1f) }
+    var down by remember { mutableStateOf(Offset.Zero) }
+    var downAt by remember { mutableStateOf(0L) }
+    val swipeMin = with(LocalDensity.current) { 80.dp.toPx() }
     val enabled by rememberUpdatedState(controlsEnabled)
-    val onPress by rememberUpdatedState(onPlayButton)
+    val onPlay by rememberUpdatedState(onPlayButton)
+    val onDoorTap by rememberUpdatedState(onDoor)
+    val next by rememberUpdatedState(onNext)
+    val previous by rememberUpdatedState(onPrevious)
     val gestures = remember {
         object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent, node: Node?) {
-                if (node == null || !enabled) return
-                pressedAt = SystemClock.uptimeMillis()
-                hostView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                onPress()
+            // Au relâché, sans attendre le délai du double toucher : la touche répond tout de suite.
+            override fun onSingleTapUp(e: MotionEvent, node: Node?) {
+                if (!enabled) return
+                when (node?.name) {
+                    "BtnPlay" -> {
+                        pressedAt = SystemClock.uptimeMillis()
+                        hostView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        onPlay()
+                    }
+                    "Door" -> onDoorTap()
+                }
             }
 
             override fun onScroll(e1: MotionEvent?, e2: MotionEvent, node: Node?, distance: Float2) = Unit
         }
     }
 
-    val ap by rememberUpdatedState(appear)
-    val dr by rememberUpdatedState(door)
-    val ins by rememberUpdatedState(insert)
     val spin by rememberUpdatedState(spinning)
     var angle by remember { mutableStateOf(0f) }
     var speed by remember { mutableStateOf(0f) }
 
     Scene(
+        // Sous la fenêtre (et non au-dessus comme par défaut quand le fond est transparent) : le volet et le titre restent visibles.
+        onViewCreated = { sceneView = this; setZOrderOnTop(false) },
         modifier = modifier,
         engine = engine,
         modelLoader = modelLoader,
@@ -330,145 +674,60 @@ private fun Walkman3D(
         isOpaque = false,
         cameraManipulator = null,
         onGestureListener = gestures,
-        onFrame = { frameTimeNanos ->
-            val t = frameTimeNanos / 1_000_000_000.0
-            // Légère respiration de la caméra pour garder le relief vivant.
-            cameraNode.position = Position((0.07 + sin(t * 0.21) * 0.012).toFloat(), (0.03 + sin(t * 0.17) * 0.004).toFloat(), 0.30f)
-            cameraNode.lookAt(Position(0f, -0.004f, 0f))
-
-            val hidden = 1f - ap
-            // Face avant du modèle = +X : un quart de tour la tourne vers la caméra.
-            model.position = Position(x = hidden * 0.30f)
-            model.rotation = Rotation(y = -90f + hidden * -35f)
-
-            doorNode?.rotation = Rotation(z = -DOOR_OPEN_DEG * dr)
-
-            if (rig != null && rigBase != null) {
-                // Trajet de la cassette : arrive d'en haut, devant le walkman, puis glisse dans le compartiment.
-                val out = 1f - ins
-                val fwd = out * out * 0.13f
-                val up = out * 0.075f
-                rig.position = Position(rigBase.x + fwd, rigBase.y + up, rigBase.z)
-                rig.isVisible = ap > 0.05f
+        onTouchEvent = { e, _ ->
+            // Glisser franchement vers la gauche = piste suivante, vers la droite = précédente ; les bobines défilent un
+            // instant (avance / retour rapide).
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { down = Offset(e.x, e.y); downAt = e.eventTime }
+                MotionEvent.ACTION_UP -> {
+                    val dx = e.x - down.x
+                    val dy = e.y - down.y
+                    if (enabled && abs(dx) > swipeMin && abs(dx) > 2f * abs(dy) && e.eventTime - downAt < 700) {
+                        boostDir = if (dx < 0f) 1f else -1f
+                        boostUntil = SystemClock.uptimeMillis() + 450
+                        hostView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        if (dx < 0f) next() else previous()
+                    }
+                }
             }
+            false
+        },
+        onFrame = { frameTimeNanos ->
+            val p = (progress.value - TAPE_HANDOFF).coerceAtLeast(0f)
+            // Avant le départ, le walkman est dessiné en tout petit derrière la cassette : ses shaders sont compilés pendant
+            // l'attente, son entrée ne saccade pas.
+            val m = if (readyState < 3) stage.warmUp() else stage.model(p)
+            model.transform = m
+            doorNode.rotation = Rotation(z = -stage.doorDegrees(p))
+            rig.transform = stage.cassetteLocal(p, m)
+            val (eye, target) = stage.camera(p, frameTimeNanos / 1_000_000_000.0)
+            cameraNode.position = eye
+            cameraNode.lookAt(target)
 
-            speed += ((if (spin) 6f else 0f) - speed) * 0.05f
+            val now = SystemClock.uptimeMillis()
+            val goal = if (now < boostUntil) boostDir * 30f else if (spin) 6f else 0f
+            speed += (goal - speed) * 0.08f
             angle = (angle + speed) % 360f
-            hubs.forEach { hub -> hub.rotation = (hubBase[hub] ?: Rotation()).let { Rotation(it.x, it.y + angle, it.z) } }
+            hubs.forEach { hub -> hub.rotation = hubBase.getValue(hub).let { Rotation(it.x, it.y + angle, it.z) } }
 
-            if (btn != null && btnBase != null) {
-                val elapsed = SystemClock.uptimeMillis() - pressedAt
-                val depth = if (elapsed in 0 until 220) {
-                    val u = elapsed / 220f
-                    0.002f * (if (u < 0.35f) u / 0.35f else (1f - u) / 0.65f)
-                } else 0f
-                btn.position = Position(btnBase.x, btnBase.y - depth, btnBase.z)
+            val elapsed = now - pressedAt
+            val depth = if (elapsed in 0 until 220) {
+                val u = elapsed / 220f
+                0.002f * (if (u < 0.35f) u / 0.35f else (1f - u) / 0.65f)
+            } else 0f
+            btn.position = Position(btnBase.x, btnBase.y - depth, btnBase.z)
+
+            if (labelReady && readyState == 0) {
+                readyFence = engine.createFence()
+                readyState = 1
+            } else if (readyState == 1) readyFence?.let { fence ->
+                if (fence.wait(Fence.Mode.DONT_FLUSH, 0) == Fence.FenceStatus.CONDITION_SATISFIED) {
+                    engine.destroyFence(fence)
+                    readyFence = null
+                    readyState = 2
+                }
             }
         },
     )
-}
-
-/**
- * Étiquette de la cassette (rapport 2,13:1, percée au centre pour la fenêtre) : pochette en fond,
- * bandeau clair en haut avec la face « A », le titre et l'artiste, façon cassette enregistrée à la main.
- */
-private fun cassetteLabel(artworkPath: String?, title: String, artist: String): Bitmap {
-    val w = 1024
-    val h = 480
-    val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-    val c = Canvas(out)
-    c.drawColor(android.graphics.Color.rgb(232, 226, 214))
-    val art = artworkPath?.let { runCatching { BitmapFactory.decodeFile(File(it).absolutePath) }.getOrNull() }
-    if (art != null) {
-        val targetRatio = w.toFloat() / h
-        val srcH = (art.width / targetRatio).toInt().coerceAtMost(art.height)
-        val srcW = (srcH * targetRatio).toInt().coerceAtMost(art.width)
-        val src = Rect((art.width - srcW) / 2, (art.height - srcH) / 2, (art.width + srcW) / 2, (art.height + srcH) / 2)
-        c.drawBitmap(art, src, RectF(0f, 0f, w.toFloat(), h.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
-        art.recycle()
-    }
-    // Bandeau d'écriture (haut de l'étiquette, au-dessus de la fenêtre).
-    val band = h * 0.34f
-    val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    p.shader = LinearGradient(0f, 0f, 0f, band, android.graphics.Color.argb(235, 246, 242, 232), android.graphics.Color.argb(215, 246, 242, 232), Shader.TileMode.CLAMP)
-    c.drawRect(0f, 0f, w.toFloat(), band, p)
-    p.shader = null
-    p.color = android.graphics.Color.rgb(30, 30, 34)
-    p.style = Paint.Style.STROKE; p.strokeWidth = 4f
-    c.drawRect(24f, 22f, 24f + band - 44f, band - 22f, p)
-    p.style = Paint.Style.FILL
-    p.typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-    p.textSize = band * 0.5f
-    c.drawText("A", 24f + (band - 44f) / 2f - p.measureText("A") / 2f, band * 0.68f, p)
-    val x0 = band + 6f
-    p.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC)
-    p.textSize = band * 0.36f
-    c.drawText(ellipsize(title, p, w - x0 - 30f), x0, band * 0.48f, p)
-    p.typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-    p.textSize = band * 0.22f
-    p.color = android.graphics.Color.rgb(70, 70, 76)
-    c.drawText(ellipsize(artist, p, w - x0 - 30f), x0, band * 0.82f, p)
-    return out
-}
-
-private fun ellipsize(text: String, paint: Paint, maxWidth: Float): String {
-    if (paint.measureText(text) <= maxWidth) return text
-    var end = text.length
-    while (end > 0 && paint.measureText(text.substring(0, end) + "…") > maxWidth) end--
-    return text.substring(0, end) + "…"
-}
-
-/**
- * Cassette dessinée en 2D (carrousel paysage, vignette) : boîtier sombre, étiquette = pochette,
- * fenêtre avec deux moyeux. Proportions mesurées sur le modèle 3D.
- */
-@Composable
-internal fun CassetteCard(artworkPath: String?, modifier: Modifier) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        val shape = RoundedCornerShape(6)
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(1.545f)
-                .shadow(10.dp, shape)
-                .clip(shape)
-                .background(Brush.verticalGradient(listOf(Color(0xFF2A2A2E), Color(0xFF151517)))),
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                val cw = maxWidth
-                val ch = maxHeight
-                // Étiquette : 4,4 %→95 % en largeur, 9,4 %→75 % en hauteur.
-                Box(
-                    Modifier
-                        .offset(cw * 0.044f, ch * 0.094f)
-                        .size(cw * 0.906f, ch * 0.656f)
-                        .clip(RoundedCornerShape(3)),
-                ) {
-                    Artwork(artworkPath, Modifier.fillMaxSize())
-                    Box(Modifier.fillMaxWidth().fillMaxHeight(0.34f).background(Color(0xE6F6F2E8)))
-                }
-                ComposeCanvas(Modifier.fillMaxSize()) {
-                    val sx = size.width / 500f
-                    val sy = size.height / 320f
-                    // Fenêtre et moyeux.
-                    drawRoundRect(
-                        Color(0xFF0E0E10), topLeft = Offset(105 * sx, 108 * sy), size = Size(290 * sx, 74 * sy),
-                        cornerRadius = CornerRadius(10 * sx),
-                    )
-                    for (hx in listOf(140f, 355f)) {
-                        val ctr = Offset(hx * sx, 145 * sy)
-                        drawCircle(Color(0xFFE8E8EA), radius = 24 * sx, center = ctr)
-                        drawCircle(Color(0xFF0E0E10), radius = 12 * sx, center = ctr)
-                        drawCircle(Color.White.copy(alpha = 0.5f), radius = 24 * sx, center = ctr, style = Stroke(1.5f * sx))
-                    }
-                    drawRoundRect(Color(0xFF3A3A40), topLeft = Offset(190 * sx, 118 * sy), size = Size(115 * sx, 54 * sy), cornerRadius = CornerRadius(4 * sx))
-                    // Bas trapézoïdal du boîtier et vis.
-                    drawRect(Color.White.copy(alpha = 0.05f), topLeft = Offset(90 * sx, 255 * sy), size = Size(320 * sx, 65 * sy))
-                    for (v in listOf(Offset(16f, 16f), Offset(484f, 16f), Offset(16f, 304f), Offset(484f, 304f), Offset(250f, 268f))) {
-                        drawCircle(Color(0xFF55555C), radius = 5 * sx, center = Offset(v.x * sx, v.y * sy))
-                    }
-                }
-            }
-        }
-    }
+    DisposableEffect(Unit) { onDispose { sceneView?.let(::releaseSceneView) } }
 }

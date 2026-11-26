@@ -17,6 +17,9 @@ import androidx.activity.compose.BackHandler
 import android.view.MotionEvent
 import android.view.HapticFeedbackConstants
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
+import android.view.Choreographer
 import android.media.AudioManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -259,8 +262,10 @@ internal fun Stereo3D(
     val spin by rememberUpdatedState(spinning)
     var angle by remember { mutableStateOf(0f) }
     var speed by remember { mutableStateOf(0f) }
+    var sceneView by remember { mutableStateOf<SceneView?>(null) }
 
     Scene(
+        onViewCreated = { sceneView = this },
         modifier = modifier,
         engine = engine,
         modelLoader = modelLoader,
@@ -310,9 +315,23 @@ internal fun Stereo3D(
             knob?.rotation = Rotation(z = -knobAngle)
         },
     )
+    DisposableEffect(Unit) { onDispose { sceneView?.let(::releaseSceneView) } }
 }
 
 private fun lerp(x: Float, y: Float, t: Float) = x + (y - x) * t
+
+private val sceneFrameCallback = SceneView::class.java.getDeclaredField("frameCallback").apply { isAccessible = true }
+
+/**
+ * À appeler quand la scène quitte la composition, avant la destruction de ses objets Filament. SceneView 2.2.1 reposte son
+ * rappel d'image sans vérifier destroy() : retiré par Compose pendant une image où ce rappel attend encore son tour, il
+ * tourne une dernière fois (sur le modèle détruit) puis se reposte sans fin ; il ne peut être retiré qu'après l'image.
+ */
+internal fun releaseSceneView(view: SceneView) {
+    view.childNodes = emptyList()
+    val callback = sceneFrameCallback.get(view) as Choreographer.FrameCallback
+    Handler(Looper.getMainLooper()).post { Choreographer.getInstance().removeFrameCallback(callback) }
+}
 
 /** Une texture Filament remplaçable, branchée sur un ou plusieurs paramètres d'un matériau glTF. */
 internal class TextureSlot(private val engine: Engine) {
