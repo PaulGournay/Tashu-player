@@ -172,30 +172,37 @@ private fun BackgroundSettings(theme: ThemeSettings, onChange: ((ThemeSettings) 
         !moving -> "Nuage immobile : activez Nuage animé."
         else -> null
     }
-    SpeedRow(theme.cloudSpeed, enabled = moving, reason = off) { v -> onChange { it.copy(cloudSpeed = v) } }
+    SliderRow("Vitesse", theme.cloudSpeed, enabled = moving, hint = off ?: "Lent à gauche, rapide à droite ; 1× = vitesse d'origine.") { v ->
+        onChange { it.copy(cloudSpeed = v) }
+    }
     ToggleRow(
         title = "Réagit à la musique",
         subtitle = off ?: "Le nuage pulse sur la musique jouée par Tashu.",
         checked = theme.cloudReactsToMusic, enabled = moving,
     ) { v -> onChange { it.copy(cloudReactsToMusic = v) } }
+    val reacting = moving && theme.cloudReactsToMusic
+    SliderRow(
+        "Intensité", theme.cloudMusicIntensity, enabled = reacting,
+        hint = off ?: if (!reacting) "Activez Réagit à la musique." else "Discret à gauche, très marqué à droite ; 1× = réglage d'origine.",
+    ) { v -> onChange { it.copy(cloudMusicIntensity = v) } }
 }
 
 @Composable
-private fun SpeedRow(speed: Float, enabled: Boolean, reason: String?, onChange: (Float) -> Unit) {
+private fun SliderRow(label: String, value: Float, enabled: Boolean, hint: String, onChange: (Float) -> Unit) {
     val g = glassColors()
     Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Vitesse", fontSize = 15.sp, color = g.ink.copy(alpha = if (enabled) 1f else 0.45f), modifier = Modifier.weight(1f))
+            Text(label, fontSize = 15.sp, color = g.ink.copy(alpha = if (enabled) 1f else 0.45f), modifier = Modifier.weight(1f))
             Text(
-                "%.2f".format(speed).trimEnd('0').trimEnd('.', ',') + "×",
+                "%.2f".format(value).trimEnd('0').trimEnd('.', ',') + "×",
                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = g.ink.copy(alpha = if (enabled) 0.9f else 0.45f),
             )
         }
         Slider(
-            value = speed,
+            value = value,
             onValueChange = { v ->
                 val snapped = (v / SPEED_STEP).roundToInt() * SPEED_STEP
-                if (snapped != speed) onChange(snapped)
+                if (snapped != value) onChange(snapped)
             },
             valueRange = SPEED_MIN..SPEED_MAX,
             steps = ((SPEED_MAX - SPEED_MIN) / SPEED_STEP).roundToInt() - 1,
@@ -207,7 +214,7 @@ private fun SpeedRow(speed: Float, enabled: Boolean, reason: String?, onChange: 
                 disabledActiveTickColor = Color.Transparent, disabledInactiveTickColor = Color.Transparent,
             ),
         )
-        Text(reason ?: "Lent à gauche, rapide à droite ; 1× = vitesse d'origine.", fontSize = 12.sp, color = g.ink.copy(alpha = 0.55f))
+        Text(hint, fontSize = 12.sp, color = g.ink.copy(alpha = 0.55f))
     }
 }
 

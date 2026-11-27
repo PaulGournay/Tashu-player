@@ -358,7 +358,7 @@ private fun rememberStyleFilter(style: ThemeStyle): ColorFilter? = remember(styl
         ThemeStyle.TONAL_SPOT -> 0.85f
         ThemeStyle.EXPRESSIVE -> 1.2f
         ThemeStyle.VIBRANT -> 1.5f
-        ThemeStyle.FIDELITY, ThemeStyle.RAINBOW -> return@remember null
+        ThemeStyle.FIDELITY, ThemeStyle.RAINBOW, ThemeStyle.ALBUM -> return@remember null
     }
     ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(saturation) })
 }
@@ -397,6 +397,7 @@ private fun ArtworkCloud(artworkPath: String?, modifier: Modifier) {
     val pulse = LocalMusicPulse.current
     val reacts = settings.cloudAnimated && settings.cloudReactsToMusic
     val speed by rememberUpdatedState(settings.cloudSpeed)
+    val intensity by rememberUpdatedState(settings.cloudMusicIntensity)
     val listening by rememberUpdatedState(reacts)
     // Phase intégrée image par image : changer la vitesse change le rythme, jamais la position des nappes.
     var s by remember { mutableFloatStateOf(0f) }
@@ -417,7 +418,7 @@ private fun ArtworkCloud(artworkPath: String?, modifier: Modifier) {
             withFrameNanos { t ->
                 val dt = ((t - last) / 1e9f).coerceAtMost(0.1f)
                 last = t
-                val target = if (listening) pulse.level(SystemClock.uptimeMillis()) else 0f
+                val target = if (listening) pulse.level(SystemClock.uptimeMillis()) * intensity else 0f
                 beat += (target - beat) * (1f - exp(-dt / if (target > beat) 0.04f else 0.3f))
                 s = (s + dt * speed * (1f + 0.8f * beat)) % CLOUD_LOOP_S
             }

@@ -176,7 +176,7 @@ enum class ThemeColorSource(val label: String) { ARTWORK("Pochette"), WALLPAPER(
 
 enum class ThemeStyle(val label: String) {
     TONAL_SPOT("Tonal"), VIBRANT("Vif"), EXPRESSIVE("Expressif"), NEUTRAL("Neutre"),
-    FIDELITY("Fidèle"), RAINBOW("Arc-en-ciel"), MONOCHROME("Monochrome"),
+    FIDELITY("Fidèle"), RAINBOW("Arc-en-ciel"), MONOCHROME("Monochrome"), ALBUM("Album"),
 }
 
 @Serializable
@@ -200,4 +200,6 @@ data class ThemeSettings(
     val cloudSpeed: Float = 1f,
     /** Le nuage pulse sur la musique jouée par l'app. */
     val cloudReactsToMusic: Boolean = false,
+    /** Force de la pulsation sur la musique, 1 = réglage d'origine. */
+    val cloudMusicIntensity: Float = 1f,
 )

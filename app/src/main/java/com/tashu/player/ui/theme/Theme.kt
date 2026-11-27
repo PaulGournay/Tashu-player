@@ -82,6 +82,7 @@ private fun ThemeStyle.toPaletteStyle(): PaletteStyle = when (this) {
     ThemeStyle.FIDELITY -> PaletteStyle.Fidelity
     ThemeStyle.RAINBOW -> PaletteStyle.Rainbow
     ThemeStyle.MONOCHROME -> PaletteStyle.Monochrome
+    ThemeStyle.ALBUM -> PaletteStyle.Content
 }
 
 /**
@@ -166,6 +167,7 @@ internal fun rememberCloudColors(artworkPath: String?): List<Color> {
         ) else fromArtwork
     }
     return remember(source, settings.style) {
+        if (settings.style == ThemeStyle.ALBUM) return@remember List(5) { source[it % source.size] }
         val tinted = source.filter { it.hsv()[1] >= 0.15f }.ifEmpty { source }
         List(5) { tinted[it % tinted.size] }.styled(settings.style).varied(if (settings.style == ThemeStyle.FIDELITY) 0.6f else 1f)
     }
@@ -184,11 +186,11 @@ private fun colorFamily(c: Color): List<Color> {
 
 private fun hueGap(a: Float, b: Float): Float = abs(((a - b + 540f) % 360f) - 180f)
 
-private val VARIED_HUE = floatArrayOf(0f, 40f, -40f, 80f, 125f)
-private val VARIED_VALUE = floatArrayOf(1f, 1.1f, 0.85f, 0.95f, 1.05f)
+private val VARIED_HUE = floatArrayOf(0f, 14f, -14f, 26f, -24f)
+private val VARIED_VALUE = floatArrayOf(1f, 1.2f, 0.75f, 0.9f, 1.1f)
 
 /**
- * Écarte les teintes d'une palette trop uniforme (teintes voisines jusqu'à 125°, plus claires ou plus sombres) ; [strength] 0..1.
+ * Écarte les teintes d'une palette trop uniforme (teintes voisines jusqu'à 26°, plus claires ou plus sombres) ; [strength] 0..1.
  * Les grands écarts partent du côté opposé au jaune-vert, qui vire au kaki une fois assombri.
  */
 private fun List<Color>.varied(strength: Float): List<Color> {
@@ -224,7 +226,7 @@ private fun List<Color>.styled(style: ThemeStyle): List<Color> {
                 val l = 0.299f * c.red + 0.587f * c.green + 0.114f * c.blue
                 Color(l, l, l)
             }
-            ThemeStyle.FIDELITY -> c
+            ThemeStyle.FIDELITY, ThemeStyle.ALBUM -> c
         }
     }
 }
