@@ -1,7 +1,7 @@
 package com.tashu.player.ui.nowplaying
 
-import com.tashu.player.ui.theme.MinimalBackground
-import com.tashu.player.ui.theme.isMinimal
+import com.tashu.player.ui.theme.AppBackground
+import com.tashu.player.ui.theme.glassColors
 import com.tashu.player.ui.theme.GlassBackdrop
 import com.tashu.player.ui.theme.glassSource
 import com.tashu.player.ui.theme.liquidGlass
@@ -10,18 +10,13 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.border
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.tashu.player.domain.model.ThemeMode
-import com.tashu.player.ui.theme.GlassBorder
 import com.tashu.player.ui.theme.GlassCircle
 import com.tashu.player.ui.theme.bubbleClickable
 import com.tashu.player.ui.theme.bubbleScale
-import com.tashu.player.ui.theme.LocalThemeSettings
-import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -82,9 +77,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
@@ -137,14 +130,13 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
         modifier = modifier,
     )
 
-    val theme = LocalThemeSettings.current
     val haze = rememberGlassBackdrop()
-    // Même esprit « Liquid Glass » que l'accueil : toujours sombre, pochette floutée en fond, commandes sur verre.
-    CompositionLocalProvider(LocalThemeSettings provides theme.copy(mode = ThemeMode.DARK)) {
+    // Même esprit « Liquid Glass » que l'accueil : fond choisi dans le menu, commandes sur verre.
     TashuTheme(seed = seed) {
-        CompositionLocalProvider(LocalContentColor provides Color.White) {
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
-                Box(Modifier.fillMaxSize().glassSource(haze)) { PlayerBackdrop(artworkPath) }
+        val g = glassColors()
+        CompositionLocalProvider(LocalContentColor provides g.ink) {
+            Box(Modifier.fillMaxSize().background(g.base)) {
+                Box(Modifier.fillMaxSize().glassSource(haze)) { AppBackground(artworkPath) }
 
                 Column(
                     Modifier
@@ -189,7 +181,7 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
                         Modifier
                             .fillMaxWidth()
                             .padding(bottom = 8.dp)
-                            .liquidGlass(haze, corner = 32.dp, tint = Color.Black.copy(alpha = 0.18f), lens = 28.dp)
+                            .liquidGlass(haze, corner = 32.dp, veil = 0.18f, lens = 28.dp)
                             .padding(horizontal = 20.dp, vertical = 16.dp),
                     ) {
                         TitleBlock(state, style, rating, onRate = { vm.rate(it) })
@@ -236,17 +228,17 @@ fun NowPlayingScreen(onClose: () -> Unit, vm: NowPlayingViewModel = hiltViewMode
             LyricsSearchSheet(search, onSearch = vm::runSearch, onPick = { vm.pick(it) }, onDismiss = vm::closeSearch)
         }
     }
-    }
 }
 
 @Composable
 private fun TopBar(haze: GlassBackdrop, onClose: () -> Unit, album: String?, onCycleStyle: () -> Unit) {
+    val g = glassColors()
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         GlassCircle(haze, Icons.Rounded.KeyboardArrowDown, "Réduire le lecteur", onClick = onClose)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("EN LECTURE", fontSize = 10.sp, letterSpacing = 1.5.sp, color = Color.White.copy(alpha = 0.55f), fontWeight = FontWeight.SemiBold)
+            Text("EN LECTURE", fontSize = 10.sp, letterSpacing = 1.5.sp, color = g.ink.copy(alpha = 0.55f), fontWeight = FontWeight.SemiBold)
             Text(
-                album.orEmpty(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+                album.orEmpty(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = g.ink,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -254,39 +246,16 @@ private fun TopBar(haze: GlassBackdrop, onClose: () -> Unit, album: String?, onC
     }
 }
 
-/** Pochette en plein écran, très floutée et assombrie vers le bas : c'est elle que le verre laisse deviner. */
-@Composable
-private fun PlayerBackdrop(path: String?) {
-    if (isMinimal()) {
-        Box(Modifier.fillMaxSize().background(MinimalBackground))
-        return
-    }
-    if (path != null) {
-        AsyncImage(
-            model = path, contentDescription = null, contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().scale(1.3f).then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(36.dp) else Modifier),
-        )
-    }
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                0f to MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                0.5f to Color.Black.copy(alpha = 0.45f),
-                1f to Color.Black.copy(alpha = 0.85f),
-            )
-        )
-    )
-}
-
 @Composable
 private fun Artwork(path: String?, modifier: Modifier) {
+    val g = glassColors()
     val shape = RoundedCornerShape(20.dp)
     Box(
         modifier
             .shadow(28.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
             .clip(shape)
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), shape),
+            .background(g.fill(0.06f))
+            .border(1.dp, g.line(0.10f), shape),
     ) {
         if (path != null) AsyncImage(model = path, contentDescription = "Pochette", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
     }
@@ -295,22 +264,24 @@ private fun Artwork(path: String?, modifier: Modifier) {
 /** Pastille en verre pour les actions secondaires (paroles, file d'attente). */
 @Composable
 private fun GlassChip(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+    val g = glassColors()
     Row(
         Modifier
             .bubbleClickable(pressedScale = 0.92f, onClick = onClick)
             .clip(CircleShape)
-            .background(if (active) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f))
-            .border(1.dp, GlassBorder, CircleShape)
+            .background(if (active) g.ink.copy(alpha = 0.18f) else g.ink.copy(alpha = 0.06f))
+            .border(1.dp, g.border, CircleShape)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
-        Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.9f), modifier = Modifier.padding(start = 6.dp))
+        Icon(icon, contentDescription = null, tint = if (active) MaterialTheme.colorScheme.primary else g.ink.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = g.ink.copy(alpha = 0.9f), modifier = Modifier.padding(start = 6.dp))
     }
 }
 
 @Composable
 private fun TitleBlock(state: PlayerUiState, style: NowPlayingStyle, rating: Int, onRate: (Int) -> Unit) {
+    val g = glassColors()
     val m = state.metadata
     // « J'aime » = note 5 (même convention que le cœur de l'écran album) ; le retirer remet 0.
     var liked by remember(rating) { mutableStateOf(rating >= 5) }
@@ -320,13 +291,13 @@ private fun TitleBlock(state: PlayerUiState, style: NowPlayingStyle, rating: Int
                 m.title?.toString().orEmpty(),
                 style = if (style == NowPlayingStyle.MINIMAL) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = g.ink,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             Text(
                 m.artist?.toString().orEmpty(),
                 style = MaterialTheme.typography.bodyLarge,
-                color = Color.White.copy(alpha = 0.65f),
+                color = g.ink.copy(alpha = 0.65f),
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -334,7 +305,7 @@ private fun TitleBlock(state: PlayerUiState, style: NowPlayingStyle, rating: Int
             Icon(
                 if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 contentDescription = if (liked) "Retirer des titres aimés" else "J'aime",
-                tint = if (liked) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+                tint = if (liked) MaterialTheme.colorScheme.primary else g.ink.copy(alpha = 0.6f),
             )
         }
     }
@@ -343,6 +314,7 @@ private fun TitleBlock(state: PlayerUiState, style: NowPlayingStyle, rating: Int
 /** "FLAC 24 bits, 96 kHz, 2 ch, 2 304 kb/s" puis la sortie réelle (fréquence + périphérique). */
 @Composable
 private fun SignalPath(a: AudioInfo) {
+    val g = glassColors()
     val source = buildList {
         a.codec?.let(::add)
         a.bitDepth?.let { add("$it bits") }
@@ -360,7 +332,7 @@ private fun SignalPath(a: AudioInfo) {
     // Discret par défaut : une ligne courte et pâle (format, fréquence, débit). Toucher = détail complet.
     var expanded by rememberSaveable { mutableStateOf(false) }
     val short = listOfNotNull(a.codec, a.sampleRateHz?.let(::khz), a.bitrateKbps?.let { "$it kb/s" }).joinToString("  ")
-    val faded = Color.White.copy(alpha = 0.4f)
+    val faded = g.ink.copy(alpha = 0.4f)
     Column(
         Modifier
             .fillMaxWidth()
@@ -382,12 +354,13 @@ private fun khz(hz: Int): String =
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SeekBar(state: PlayerUiState, onSeek: (Long) -> Unit) {
+    val g = glassColors()
     var dragging by remember { mutableStateOf<Float?>(null) }
     val duration = state.durationMs.coerceAtLeast(1)
     val fraction = dragging ?: (state.positionMs.toFloat() / duration).coerceIn(0f, 1f)
-    val muted = Color.White.copy(alpha = 0.55f)
+    val muted = g.ink.copy(alpha = 0.55f)
     Column {
-        if (state.isBuffering) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Color.White, trackColor = Color.White.copy(alpha = 0.15f))
+        if (state.isBuffering) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = g.ink, trackColor = g.ink.copy(alpha = 0.15f))
         Slider(
             value = fraction,
             onValueChange = { dragging = it },
@@ -396,12 +369,12 @@ private fun SeekBar(state: PlayerUiState, onSeek: (Long) -> Unit) {
             thumb = {
                 // Pastille discrète qui grossit quand on la saisit.
                 val d = if (dragging != null) 16.dp else 10.dp
-                Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(d).clip(CircleShape).background(Color.White)) }
+                Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(d).clip(CircleShape).background(g.ink)) }
             },
             track = { st ->
                 val f = (st.value - st.valueRange.start) / (st.valueRange.endInclusive - st.valueRange.start)
-                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f))) {
-                    Box(Modifier.fillMaxWidth(f).height(4.dp).background(Color.White))
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(g.line(0.18f))) {
+                    Box(Modifier.fillMaxWidth(f).height(4.dp).background(g.ink))
                 }
             },
         )
@@ -419,6 +392,7 @@ private fun fmt(ms: Long): String {
 
 @Composable
 private fun Transport(state: PlayerUiState, vm: NowPlayingViewModel) {
+    val g = glassColors()
     Row(
         Modifier.fillMaxWidth().padding(top = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -426,10 +400,10 @@ private fun Transport(state: PlayerUiState, vm: NowPlayingViewModel) {
     ) {
         IconToggleButton(checked = state.shuffle, onCheckedChange = { vm.player.toggleShuffle() }) {
             Icon(Icons.Rounded.Shuffle, contentDescription = "Lecture aléatoire",
-                tint = if (state.shuffle) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f))
+                tint = if (state.shuffle) MaterialTheme.colorScheme.primary else g.ink.copy(alpha = 0.6f))
         }
         IconButton(onClick = { vm.player.previous() }, modifier = Modifier.size(56.dp)) {
-            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Précédent", tint = Color.White, modifier = Modifier.size(38.dp))
+            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Précédent", tint = g.ink, modifier = Modifier.size(38.dp))
         }
         val playSource = remember { MutableInteractionSource() }
         FilledIconButton(
@@ -437,7 +411,7 @@ private fun Transport(state: PlayerUiState, vm: NowPlayingViewModel) {
             interactionSource = playSource,
             shape = CircleShape,
             modifier = Modifier.bubbleScale(playSource, 0.86f).size(72.dp).clip(CircleShape),
-            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = g.ink, contentColor = g.onInk),
         ) {
             Icon(
                 if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
@@ -446,13 +420,13 @@ private fun Transport(state: PlayerUiState, vm: NowPlayingViewModel) {
             )
         }
         IconButton(onClick = { vm.player.next() }, modifier = Modifier.size(56.dp)) {
-            Icon(Icons.Rounded.SkipNext, contentDescription = "Suivant", tint = Color.White, modifier = Modifier.size(38.dp))
+            Icon(Icons.Rounded.SkipNext, contentDescription = "Suivant", tint = g.ink, modifier = Modifier.size(38.dp))
         }
         IconButton(onClick = { vm.player.cycleRepeat() }) {
             Icon(
                 if (state.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                 contentDescription = "Répétition",
-                tint = if (state.repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+                tint = if (state.repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else g.ink.copy(alpha = 0.6f),
             )
         }
     }

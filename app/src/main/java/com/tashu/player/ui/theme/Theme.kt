@@ -13,8 +13,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -139,5 +141,65 @@ fun rememberArtworkPalette(artworkPath: String?): State<List<Color>> = produceSt
                 .map { Color(it.rgb) }
                 .distinct()
         }.getOrDefault(emptyList())
+    }
+}
+
+private val CloudFallback = listOf(Color(0xFF2B3A55), Color(0xFF4F6D7A), Color(0xFF3A2B55))
+
+/**
+ * Les cinq teintes du nuage de fond : prises à la source de couleur du thème (pochette, fond d'écran
+ * ou couleur fixe), puis passées au style des couleurs (vif, neutre, monochrome, arc-en-ciel…).
+ */
+@Composable
+internal fun rememberCloudColors(artworkPath: String?): List<Color> {
+    val settings = LocalThemeSettings.current
+    val artwork by rememberArtworkPalette(artworkPath)
+    val fromArtwork = artwork.ifEmpty { CloudFallback }
+    val source = when (settings.colorSource) {
+        ThemeColorSource.ARTWORK -> fromArtwork
+        ThemeColorSource.FIXED -> colorFamily(Color(settings.fixedColor))
+        ThemeColorSource.WALLPAPER -> if (Build.VERSION.SDK_INT >= 31) listOf(
+            colorResource(android.R.color.system_accent1_500), colorResource(android.R.color.system_accent2_500),
+            colorResource(android.R.color.system_accent3_500), colorResource(android.R.color.system_accent1_300),
+            colorResource(android.R.color.system_accent3_300),
+        ) else fromArtwork
+    }
+    return remember(source, settings.style) { List(5) { source[it % source.size] }.styled(settings.style) }
+}
+
+private fun Color.hsv(): FloatArray = FloatArray(3).also { android.graphics.Color.colorToHSV(toArgb(), it) }
+
+private fun hsv(h: Float, s: Float, v: Float): Color =
+    Color.hsv(((h % 360f) + 360f) % 360f, s.coerceIn(0f, 1f), v.coerceIn(0f, 1f))
+
+/** Une couleur fixe déclinée en cinq nuances voisines (teinte décalée, plus claire, plus sombre). */
+private fun colorFamily(c: Color): List<Color> {
+    val (h, s, v) = c.hsv()
+    return listOf(hsv(h, s, v), hsv(h + 28f, s * 0.9f, v), hsv(h - 28f, s, v * 0.8f), hsv(h, s * 0.55f, v + 0.25f), hsv(h + 12f, s, v * 0.6f))
+}
+
+private val EXPRESSIVE_SHIFT = floatArrayOf(0f, 50f, -50f, 120f, -120f)
+
+private fun List<Color>.styled(style: ThemeStyle): List<Color> {
+    if (style == ThemeStyle.FIDELITY) return this
+    val h0 = first().hsv()[0]
+    return mapIndexed { i, c ->
+        val (h, s, v) = c.hsv()
+        when (style) {
+            ThemeStyle.TONAL_SPOT -> {
+                // Teintes rapprochées de la couleur principale, saturation un peu retenue.
+                val d = ((h0 - h + 540f) % 360f) - 180f
+                hsv(h + d * 0.4f, s * 0.8f, v)
+            }
+            ThemeStyle.VIBRANT -> hsv(h, s * 1.3f + 0.2f, maxOf(v, 0.8f))
+            ThemeStyle.EXPRESSIVE -> hsv(h + EXPRESSIVE_SHIFT[i % EXPRESSIVE_SHIFT.size], s * 1.1f + 0.1f, maxOf(v, 0.7f))
+            ThemeStyle.NEUTRAL -> hsv(h, s * 0.3f, v)
+            ThemeStyle.RAINBOW -> hsv(h0 + i * 72f, 0.75f, 0.9f)
+            ThemeStyle.MONOCHROME -> {
+                val l = 0.299f * c.red + 0.587f * c.green + 0.114f * c.blue
+                Color(l, l, l)
+            }
+            ThemeStyle.FIDELITY -> c
+        }
     }
 }

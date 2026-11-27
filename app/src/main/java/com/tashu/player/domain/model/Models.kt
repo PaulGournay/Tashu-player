@@ -168,6 +168,8 @@ enum class DeckMode(val label: String) { CD("Platine CD"), WALKMAN("Walkman"), F
 
 enum class UiStyle(val label: String) { LIQUID_GLASS("Liquid Glass"), MINIMAL("Minimaliste") }
 
+enum class BackgroundStyle(val label: String) { CLOUD("Nuage vivant"), BLURRED_ARTWORK("Pochette floue"), PLAIN("Uni") }
+
 enum class ThemeMode(val label: String) { SYSTEM("Système"), LIGHT("Clair"), DARK("Sombre") }
 
 enum class ThemeColorSource(val label: String) { ARTWORK("Pochette"), WALLPAPER("Fond d'écran"), FIXED("Couleur fixe") }
@@ -190,4 +192,6 @@ data class ThemeSettings(
     val uiStyle: UiStyle = UiStyle.LIQUID_GLASS,
     /** Paysage : ce que fait la pochette centrale quand on la touche (platine CD, walkman ou liste façon iOS 3). */
     val deckMode: DeckMode = DeckMode.CD,
+    /** Fond de la bibliothèque, des albums et du lecteur (ignoré en style minimaliste). */
+    val background: BackgroundStyle = BackgroundStyle.CLOUD,
 )

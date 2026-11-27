@@ -1,5 +1,8 @@
 package com.tashu.player.ui.library
 
+import com.tashu.player.ui.theme.AppBackground
+import com.tashu.player.ui.theme.GlassColors
+import com.tashu.player.ui.theme.glassColors
 import com.tashu.player.ui.theme.GlassBackdrop
 import com.tashu.player.ui.theme.glassSource
 import com.tashu.player.ui.theme.liquidGlass
@@ -108,16 +111,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.tashu.player.domain.model.Album
 import com.tashu.player.domain.model.Artist
-import com.tashu.player.domain.model.ThemeMode
 import com.tashu.player.domain.model.Track
 import com.tashu.player.ui.MainViewModel
 import com.tashu.player.ui.SearchResults
 import com.tashu.player.ui.menu.AppDrawer
-import com.tashu.player.ui.theme.LocalThemeSettings
 import com.tashu.player.ui.theme.TashuTheme
-import com.tashu.player.ui.theme.GlassBorder
 import com.tashu.player.ui.theme.GlassCircle
-import com.tashu.player.ui.theme.ArtworkCloud
 import com.tashu.player.ui.theme.bubbleClickable
 import com.tashu.player.ui.theme.bubbleSpring
 import com.tashu.player.ui.theme.rememberArtworkSeed
@@ -157,103 +156,101 @@ fun LibraryScreen(
     BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     BackHandler(enabled = !drawer.isOpen && tab != MainTab.HOME) { tab = MainTab.HOME }
 
-    // L'esprit « verre sur fond sombre » impose le thème sombre sur cet écran, teinté par la pochette.
-    CompositionLocalProvider(LocalThemeSettings provides theme.copy(mode = ThemeMode.DARK)) {
-        TashuTheme(seed = seed) {
-            ModalNavigationDrawer(
-                drawerState = drawer,
-                gesturesEnabled = drawer.isOpen,
-                scrimColor = Color.Black.copy(alpha = 0.35f),
-                drawerContent = {
-                    AppDrawer(
-                        backdrop = haze,
-                        theme = theme,
-                        onThemeChange = vm::updateTheme,
-                        onLibrary = { scope.launch { drawer.close() } },
-                        onManageFolders = { scope.launch { drawer.close() }; onManageFolders() },
-                        // Le menu reste ouvert : on y suit l'indexation en direct.
-                        scan = scan,
-                        onRescan = { vm.rescan() },
-                    )
-                },
-            ) {
-                val status = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-                val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                val hasPlayer = playerState.mediaId != null
-                val topSpace = status + if (tab == MainTab.LIBRARY) 112.dp else 64.dp
-                val bottomSpace = nav + 84.dp + if (hasPlayer) 72.dp else 0.dp
-                val contentPadding = PaddingValues(top = topSpace, bottom = bottomSpace)
+    TashuTheme(seed = seed) {
+        val g = glassColors()
+        ModalNavigationDrawer(
+            drawerState = drawer,
+            gesturesEnabled = drawer.isOpen,
+            scrimColor = Color.Black.copy(alpha = 0.35f),
+            drawerContent = {
+                AppDrawer(
+                    backdrop = haze,
+                    theme = theme,
+                    onThemeChange = vm::updateTheme,
+                    onLibrary = { scope.launch { drawer.close() } },
+                    onManageFolders = { scope.launch { drawer.close() }; onManageFolders() },
+                    // Le menu reste ouvert : on y suit l'indexation en direct.
+                    scan = scan,
+                    onRescan = { vm.rescan() },
+                )
+            },
+        ) {
+            val status = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            val hasPlayer = playerState.mediaId != null
+            val topSpace = status + if (tab == MainTab.LIBRARY) 112.dp else 64.dp
+            val bottomSpace = nav + 84.dp + if (hasPlayer) 72.dp else 0.dp
+            val contentPadding = PaddingValues(top = topSpace, bottom = bottomSpace)
 
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    // Pas de Scaffold/Surface ici : on fournit nous-mêmes la couleur de texte des listes réutilisées.
-                    Box(Modifier.fillMaxSize().glassSource(haze)) {
-                        // Nuage aux couleurs de la pochette en cours, sur toute la page : le verre le laisse deviner.
-                        ArtworkCloud(playerState.metadata.artworkUri?.path)
-                        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                        AnimatedContent(
-                            targetState = tab,
-                            transitionSpec = {
-                                (fadeIn(tween(220)) + scaleIn(bubbleSpring(), initialScale = 0.94f)) togetherWith
-                                    (fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 1.03f))
-                            },
-                            label = "tab",
-                        ) { shown ->
-                        when (shown) {
-                            MainTab.HOME -> HomeContent(vm, contentPadding, onOpenAlbum) { artist ->
-                                vm.searchQuery.value = artist
-                                tab = MainTab.SEARCH
-                            }
-                            MainTab.SEARCH -> SearchContent(vm, contentPadding, playerState.mediaId, onOpenAlbum)
-                            MainTab.LIBRARY -> when (section) {
-                                LibrarySection.ALBUMS -> AlbumsGrid(vm, contentPadding, onOpenAlbum)
-                                LibrarySection.TRACKS -> TrackList(vm.tracks.collectAsStateWithLifecycle().value, contentPadding, playerState.mediaId) { l, i -> vm.play(l, i) }
-                                LibrarySection.FOLDERS -> FolderBrowser(vm, contentPadding)
-                                LibrarySection.PLAYLISTS -> SmartPlaylists(vm, contentPadding)
-                            }
+            Box(Modifier.fillMaxSize().background(g.base)) {
+                // Pas de Scaffold/Surface ici : on fournit nous-mêmes la couleur de texte des listes réutilisées.
+                Box(Modifier.fillMaxSize().glassSource(haze)) {
+                    // Fond choisi dans le menu (nuage, pochette floue ou uni), sur toute la page : le verre le laisse deviner.
+                    AppBackground(playerState.metadata.artworkUri?.path)
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                    AnimatedContent(
+                        targetState = tab,
+                        transitionSpec = {
+                            (fadeIn(tween(220)) + scaleIn(bubbleSpring(), initialScale = 0.94f)) togetherWith
+                                (fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 1.03f))
+                        },
+                        label = "tab",
+                    ) { shown ->
+                    when (shown) {
+                        MainTab.HOME -> HomeContent(vm, contentPadding, onOpenAlbum) { artist ->
+                            vm.searchQuery.value = artist
+                            tab = MainTab.SEARCH
                         }
-                        }
-                    } }
-
-                    // Bord de défilement façon iOS 26 : sous l'en-tête, le contenu se floute progressivement et se fond dans le nuage.
-                    Box(Modifier.fillMaxWidth().height(topSpace + 8.dp).scrollEdgeBlur(haze))
-                    // ---- En-tête ----
-                    Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            GlassCircle(haze, Icons.Rounded.Menu, "Ouvrir le menu") { scope.launch { drawer.open() } }
-                            Text(
-                                tab.label,
-                                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-                                color = Color.White, modifier = Modifier.weight(1f).padding(start = 14.dp),
-                            )
-                            if (tab == MainTab.LIBRARY && section == LibrarySection.ALBUMS) {
-                                val columns by vm.albumGridColumns.collectAsStateWithLifecycle()
-                                GlassPill(haze, onClick = vm::cycleAlbumGridColumns) {
-                                    Icon(if (columns == 1) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                    Text("$columns", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp))
-                                }
-                                Spacer(Modifier.width(8.dp))
-                            }
-                        }
-                        if (tab == MainTab.LIBRARY) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = 12.dp).horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                LibrarySection.entries.forEach { s -> Chip(s.label, selected = s == section) { section = s } }
-                            }
+                        MainTab.SEARCH -> SearchContent(vm, contentPadding, playerState.mediaId, onOpenAlbum)
+                        MainTab.LIBRARY -> when (section) {
+                            LibrarySection.ALBUMS -> AlbumsGrid(vm, contentPadding, onOpenAlbum)
+                            LibrarySection.TRACKS -> TrackList(vm.tracks.collectAsStateWithLifecycle().value, contentPadding, playerState.mediaId) { l, i -> vm.play(l, i) }
+                            LibrarySection.FOLDERS -> FolderBrowser(vm, contentPadding)
+                            LibrarySection.PLAYLISTS -> SmartPlaylists(vm, contentPadding)
                         }
                     }
-
-                    // ---- Mini-lecteur et barre de navigation flottants ----
-                    Column(
-                        Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        AnimatedVisibility(hasPlayer, enter = fadeIn(), exit = fadeOut()) {
-                            GlassMiniPlayer(vm, haze, onOpenPlayer)
-                        }
-                        GlassNavBar(haze, tab) { tab = it }
                     }
+                } }
+
+                // Bord de défilement façon iOS 26 : sous l'en-tête, le contenu se floute progressivement et se fond dans le nuage.
+                Box(Modifier.fillMaxWidth().height(topSpace + 8.dp).scrollEdgeBlur(haze))
+                // ---- En-tête ----
+                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        GlassCircle(haze, Icons.Rounded.Menu, "Ouvrir le menu") { scope.launch { drawer.open() } }
+                        Text(
+                            tab.label,
+                            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                            color = g.ink, modifier = Modifier.weight(1f).padding(start = 14.dp),
+                        )
+                        if (tab == MainTab.LIBRARY && section == LibrarySection.ALBUMS) {
+                            val columns by vm.albumGridColumns.collectAsStateWithLifecycle()
+                            GlassPill(haze, onClick = vm::cycleAlbumGridColumns) {
+                                Icon(if (columns == 1) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView, null, tint = g.ink, modifier = Modifier.size(18.dp))
+                                Text("$columns", color = g.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp))
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                    }
+                    if (tab == MainTab.LIBRARY) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 12.dp).horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            LibrarySection.entries.forEach { s -> Chip(s.label, selected = s == section) { section = s } }
+                        }
+                    }
+                }
+
+                // ---- Mini-lecteur et barre de navigation flottants ----
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    AnimatedVisibility(hasPlayer, enter = fadeIn(), exit = fadeOut()) {
+                        GlassMiniPlayer(vm, haze, onOpenPlayer)
+                    }
+                    GlassNavBar(haze, tab) { tab = it }
                 }
             }
         }
@@ -276,27 +273,29 @@ private fun GlassPill(haze: GlassBackdrop, onClick: () -> Unit, content: @Compos
 
 @Composable
 private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val g = glassColors()
     Text(
         label,
-        color = if (selected) Color.Black else Color.White,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else g.ink,
         fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
         modifier = Modifier
             .bubbleClickable(pressedScale = 0.92f, onClick = onClick)
             .clip(CircleShape)
-            .background(if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.09f))
-            .border(1.dp, if (selected) Color.Transparent else GlassBorder, CircleShape)
+            .background(if (selected) MaterialTheme.colorScheme.primary else g.ink.copy(alpha = 0.09f))
+            .border(1.dp, if (selected) Color.Transparent else g.border, CircleShape)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }
 
 @Composable
 private fun GlassNavBar(haze: GlassBackdrop, current: MainTab, onSelect: (MainTab) -> Unit) {
+    val g = glassColors()
     val shape = RoundedCornerShape(32.dp)
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .height(64.dp)
-            .liquidGlass(haze, corner = 32.dp, lens = 26.dp, tint = Color.Black.copy(alpha = 0.38f), frost = 3.dp),
+            .liquidGlass(haze, corner = 32.dp, lens = 26.dp, veil = 0.38f, frost = 3.dp),
     ) {
         val n = MainTab.entries.size
         val slot = maxWidth / n
@@ -312,13 +311,13 @@ private fun GlassNavBar(haze: GlassBackdrop, current: MainTab, onSelect: (MainTa
                 .fillMaxHeight()
                 .graphicsLayer { scaleX = stretch; scaleY = 1f / kotlin.math.sqrt(stretch) }
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.16f))
-                .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.05f), Color.White.copy(alpha = 0.35f))), CircleShape),
+                .background(g.fill(0.16f))
+                .border(1.dp, Brush.linearGradient(listOf(g.ink.copy(alpha = 0.6f), g.ink.copy(alpha = 0.05f), g.ink.copy(alpha = 0.35f))), CircleShape),
         )
         Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
             MainTab.entries.forEach { t ->
                 val selected = t == current
-                val tint by animateColorAsState(if (selected) Color.White else Color.White.copy(alpha = 0.55f), label = "tint")
+                val tint by animateColorAsState(if (selected) g.ink else g.ink.copy(alpha = 0.55f), label = "tint")
                 Column(
                     Modifier
                         .bubbleClickable(pressedScale = 0.85f) { onSelect(t) }
@@ -336,6 +335,7 @@ private fun GlassNavBar(haze: GlassBackdrop, current: MainTab, onSelect: (MainTa
 
 @Composable
 internal fun GlassMiniPlayer(vm: MainViewModel, haze: GlassBackdrop, onOpen: () -> Unit) {
+    val g = glassColors()
     val s by vm.player.state.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(20.dp)
     // Atterrissage après réduction du lecteur : part un peu au-dessus, étiré, puis retombe et rebondit en s'écrasant.
@@ -361,27 +361,27 @@ internal fun GlassMiniPlayer(vm: MainViewModel, haze: GlassBackdrop, onOpen: () 
             }
             .bubbleClickable(pressedScale = 0.96f, onClick = onOpen)
             .fillMaxWidth()
-            .liquidGlass(haze, corner = 20.dp, tint = Color.Black.copy(alpha = 0.42f), frost = 3.dp),
+            .liquidGlass(haze, corner = 20.dp, veil = 0.42f, frost = 3.dp),
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
                 model = s.metadata.artworkUri?.path, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.08f)),
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(g.fill(0.08f)),
             )
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(s.metadata.title?.toString().orEmpty(), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(s.metadata.artist?.toString().orEmpty(), color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.metadata.title?.toString().orEmpty(), color = g.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.metadata.artist?.toString().orEmpty(), color = g.ink.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box(
                 Modifier.bubbleClickable(pressedScale = 0.8f) { vm.player.togglePlay() }.size(40.dp).clip(CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(if (s.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, contentDescription = if (s.isPlaying) "Pause" else "Lecture", tint = Color.White)
+                Icon(if (s.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, contentDescription = if (s.isPlaying) "Pause" else "Lecture", tint = g.ink)
             }
         }
         // Progression : un trait discret au bas de la pastille.
         val progress = if (s.durationMs > 0) (s.positionMs.toFloat() / s.durationMs).coerceIn(0f, 1f) else 0f
-        Box(Modifier.align(Alignment.BottomStart).padding(horizontal = 18.dp).fillMaxWidth().height(2.dp).background(Color.White.copy(alpha = 0.12f))) {
+        Box(Modifier.align(Alignment.BottomStart).padding(horizontal = 18.dp).fillMaxWidth().height(2.dp).background(g.line(0.12f))) {
             Box(Modifier.fillMaxWidth(progress).height(2.dp).background(MaterialTheme.colorScheme.primary))
         }
     }
@@ -391,11 +391,12 @@ internal fun GlassMiniPlayer(vm: MainViewModel, haze: GlassBackdrop, onOpen: () 
 
 @Composable
 private fun HomeContent(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: (Long) -> Unit, onOpenArtist: (String) -> Unit) {
+    val g = glassColors()
     val albums by vm.albums.collectAsStateWithLifecycle()
     val artists by vm.artists.collectAsStateWithLifecycle()
     if (albums.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
-            Text("Votre bibliothèque est vide. Choisissez vos dossiers Drive dans le menu pour l'indexer.", color = Color.White.copy(alpha = 0.7f))
+            Text("Votre bibliothèque est vide. Choisissez vos dossiers Drive dans le menu pour l'indexer.", color = g.ink.copy(alpha = 0.7f))
         }
         return
     }
@@ -434,48 +435,52 @@ private fun HomeContent(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: 
 
 @Composable
 private fun CompactCard(a: Album, modifier: Modifier, onClick: () -> Unit) {
+    val g = glassColors()
     Row(
         modifier
             .bubbleClickable(pressedScale = 0.95f, onClick = onClick)
             .height(56.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(alpha = 0.08f))
-            .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp)),
+            .background(g.fill(0.08f))
+            .border(1.dp, g.line(0.06f), RoundedCornerShape(8.dp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(model = a.artworkPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).background(Color.White.copy(alpha = 0.06f)))
-        Text(a.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 10.dp))
+        AsyncImage(model = a.artworkPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).background(g.fill(0.06f)))
+        Text(a.title, color = g.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 10.dp))
     }
 }
 
 @Composable
 private fun SectionTitle(text: String, action: (@Composable () -> Unit)? = null) {
+    val g = glassColors()
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        Text(text, color = g.ink, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         action?.invoke()
     }
 }
 
 @Composable
 private fun AlbumCard(a: Album, size: Dp, onClick: () -> Unit) {
+    val g = glassColors()
     Column(Modifier.bubbleClickable(pressedScale = 0.94f, onClick = onClick).width(size)) {
         AsyncImage(
             model = a.artworkPath, contentDescription = null, contentScale = ContentScale.Crop,
-            modifier = Modifier.size(size).clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.06f)),
+            modifier = Modifier.size(size).clip(RoundedCornerShape(8.dp)).background(g.fill(0.06f)),
         )
-        Text(a.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
-        Text(a.artist, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(a.title, color = g.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        Text(a.artist, color = g.ink.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun ArtistCircle(artist: Artist, artwork: String?, size: Dp, onClick: () -> Unit) {
+    val g = glassColors()
     Column(Modifier.bubbleClickable(pressedScale = 0.94f, onClick = onClick).width(size), horizontalAlignment = Alignment.CenterHorizontally) {
         AsyncImage(
             model = artwork, contentDescription = null, contentScale = ContentScale.Crop,
-            modifier = Modifier.size(size).clip(CircleShape).background(Color.White.copy(alpha = 0.06f)).border(1.dp, GlassBorder, CircleShape),
+            modifier = Modifier.size(size).clip(CircleShape).background(g.fill(0.06f)).border(1.dp, g.border, CircleShape),
         )
-        Text(artist.name, color = Color.White, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        Text(artist.name, color = g.ink, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
     }
 }
 
@@ -483,6 +488,7 @@ private fun ArtistCircle(artist: Artist, artwork: String?, size: Dp, onClick: ()
 
 @Composable
 private fun SearchContent(vm: MainViewModel, padding: PaddingValues, playingId: String?, onOpenAlbum: (Long) -> Unit) {
+    val g = glassColors()
     val query by vm.searchQuery.collectAsStateWithLifecycle()
     val results by vm.searchResults.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf(SearchFilter.ALL) }
@@ -499,19 +505,19 @@ private fun SearchContent(vm: MainViewModel, padding: PaddingValues, playingId: 
                     .fillMaxWidth()
                     .height(50.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f))
-                    .border(1.dp, GlassBorder, CircleShape)
+                    .background(g.fill(0.10f))
+                    .border(1.dp, g.border, CircleShape)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Rounded.Search, null, tint = Color.White.copy(alpha = 0.7f))
+                Icon(Icons.Rounded.Search, null, tint = g.ink.copy(alpha = 0.7f))
                 Box(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    if (query.isEmpty()) Text("Artistes, morceaux, albums", color = Color.White.copy(alpha = 0.45f), fontSize = 16.sp)
+                    if (query.isEmpty()) Text("Artistes, morceaux, albums", color = g.ink.copy(alpha = 0.45f), fontSize = 16.sp)
                     BasicTextField(
                         value = query,
                         onValueChange = { vm.searchQuery.value = it },
                         singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White, fontSize = 16.sp),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = g.ink, fontSize = 16.sp),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
@@ -519,7 +525,7 @@ private fun SearchContent(vm: MainViewModel, padding: PaddingValues, playingId: 
                     )
                 }
                 if (query.isNotEmpty()) {
-                    Icon(Icons.Rounded.Close, "Effacer", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.clip(CircleShape).clickable { vm.searchQuery.value = "" })
+                    Icon(Icons.Rounded.Close, "Effacer", tint = g.ink.copy(alpha = 0.7f), modifier = Modifier.clip(CircleShape).clickable { vm.searchQuery.value = "" })
                 }
             }
         }
@@ -541,10 +547,10 @@ private fun SearchContent(vm: MainViewModel, padding: PaddingValues, playingId: 
             }
         }
         if (results.isEmpty) {
-            item { Text("Aucun résultat pour « $query ».", color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(24.dp)) }
+            item { Text("Aucun résultat pour « $query ».", color = g.ink.copy(alpha = 0.6f), modifier = Modifier.padding(24.dp)) }
             return@LazyColumn
         }
-        searchSections(results, filter, playingId, vm, onOpenAlbum, onSeeAll = { filter = it })
+        searchSections(results, filter, playingId, vm, onOpenAlbum, onSeeAll = { filter = it }, g = g)
     }
 }
 
@@ -555,6 +561,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchSections(
     vm: MainViewModel,
     onOpenAlbum: (Long) -> Unit,
     onSeeAll: (SearchFilter) -> Unit,
+    g: GlassColors,
 ) {
     val all = filter == SearchFilter.ALL
     if ((all || filter == SearchFilter.ARTISTS) && r.artists.isNotEmpty()) {
@@ -568,10 +575,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchSections(
         } else {
             items(r.artists, key = { it.first.id }) { (ar, art) ->
                 Row(Modifier.fillMaxWidth().clickable { vm.searchQuery.value = ar.name }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.06f)))
+                    AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(CircleShape).background(g.fill(0.06f)))
                     Column(Modifier.padding(start = 14.dp)) {
-                        Text(ar.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        Text("${ar.albumCount} album${if (ar.albumCount > 1) "s" else ""}, ${ar.trackCount} morceaux", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                        Text(ar.name, color = g.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${ar.albumCount} album${if (ar.albumCount > 1) "s" else ""}, ${ar.trackCount} morceaux", color = g.ink.copy(alpha = 0.6f), fontSize = 12.sp)
                     }
                 }
             }
@@ -588,10 +595,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchSections(
         } else {
             items(r.albums, key = { it.id }) { a ->
                 Row(Modifier.fillMaxWidth().clickable { onOpenAlbum(a.id) }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(model = a.artworkPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.06f)))
+                    AsyncImage(model = a.artworkPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(g.fill(0.06f)))
                     Column(Modifier.padding(start = 14.dp)) {
-                        Text(a.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(listOfNotNull(a.artist, a.year?.toString()).joinToString(", "), color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1)
+                        Text(a.title, color = g.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(a.artist, a.year?.toString()).joinToString(", "), color = g.ink.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1)
                     }
                 }
             }
@@ -604,8 +611,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchSections(
                     Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable { vm.play(r.tracks, 0) }.padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Rounded.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(18.dp))
-                    Text("Lire les résultats", color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp))
+                    Icon(Icons.Rounded.PlayArrow, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+                    Text("Lire les résultats", color = MaterialTheme.colorScheme.onPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp))
                 }
             }
         }
@@ -617,21 +624,23 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchSections(
 
 @Composable
 private fun SeeAll(onClick: () -> Unit) {
+    val g = glassColors()
     Text(
-        "Voir tout", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.bubbleClickable(onClick = onClick).clip(CircleShape).border(1.dp, GlassBorder, CircleShape).padding(horizontal = 14.dp, vertical = 7.dp),
+        "Voir tout", color = g.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.bubbleClickable(onClick = onClick).clip(CircleShape).border(1.dp, g.border, CircleShape).padding(horizontal = 14.dp, vertical = 7.dp),
     )
 }
 
 @Composable
 private fun SearchTrackRow(t: Track, playing: Boolean, onClick: () -> Unit) {
+    val g = glassColors()
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(model = t.artworkPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.06f)))
+        AsyncImage(model = t.artworkPath, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)).background(g.fill(0.06f)))
         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-            Text(t.title, color = if (playing) MaterialTheme.colorScheme.primary else Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(t.artist, t.album).joinToString(" · "), color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.title, color = if (playing) MaterialTheme.colorScheme.primary else g.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(listOfNotNull(t.artist, t.album).joinToString(" · "), color = g.ink.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text((t.durationMs / 1000).let { "%d:%02d".format(it / 60, it % 60) }, color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+        Text((t.durationMs / 1000).let { "%d:%02d".format(it / 60, it % 60) }, color = g.ink.copy(alpha = 0.5f), fontSize = 12.sp)
     }
 }
 

@@ -5,10 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
-import android.view.PixelCopy
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.PixelCopy
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
@@ -18,6 +18,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -47,11 +48,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,12 +67,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.android.filament.Engine
 import com.google.android.filament.Fence
+import com.google.android.filament.Texture
+import com.google.android.filament.TextureSampler
 import com.google.android.filament.View
+import com.google.android.filament.gltfio.FilamentInstance
 import com.tashu.player.domain.model.Album
 import com.tashu.player.playback.MediaItemMapper
 import com.tashu.player.ui.MainViewModel
@@ -88,6 +95,7 @@ import io.github.sceneview.SceneView
 import io.github.sceneview.collision.Box as CollisionBox
 import io.github.sceneview.collision.Vector3 as CollisionVector
 import io.github.sceneview.gesture.GestureDetector
+import io.github.sceneview.loaders.ModelLoader
 import io.github.sceneview.math.Position
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.node.ModelNode
@@ -96,21 +104,28 @@ import io.github.sceneview.rememberCameraNode
 import io.github.sceneview.rememberEngine
 import io.github.sceneview.rememberModelLoader
 import io.github.sceneview.rememberView
+import io.github.sceneview.utils.readBuffer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 import kotlinx.coroutines.withContext
+import java.nio.Buffer
+import java.nio.ByteBuffer
+import kotlin.coroutines.resume
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -126,14 +141,13 @@ internal fun walkmanModelAvailable(context: Context): Boolean =
 
 /**
  * Chronologie, en secondes (`progress` avance linéairement, chaque geste a sa propre courbe). D'abord [TAPE_HANDOFF] :
- * les autres cassettes du carrousel s'écartent et s'effacent, puis la cassette 3D prend la place de la 2D. Ensuite, sur
- * l'horloge de la scène : 0 → 0,9 le walkman entre par la droite, debout, et ouvre sa porte (0,35 → 0,95) ; 0 → 1,45 la
- * cassette vient vers soi puis vole jusqu'au-dessus de la porte ; 1,45 → 1,85 elle glisse dans la porte ; 1,85 → 2,3 la
- * porte se referme (rebond et clic) ; 2,25 → 3,1 le walkman se couche et remplit l'écran. La caméra suit la cassette.
+ * les autres cassettes du carrousel s'écartent et s'effacent. Ensuite, sur l'horloge de la scène : 0 → 0,9 le walkman
+ * entre par la droite, debout, et ouvre sa porte (0,35 → 0,95) ; 0 → 1,45 la cassette vient vers soi puis vole jusqu'au-dessus
+ * de la porte ; 1,45 → 1,85 elle glisse dans la porte ; 1,85 → 2,3 la porte se referme (rebond et clic) ; 2,25 → 3,1 le
+ * walkman se couche et remplit l'écran. La caméra suit la cassette.
  */
 internal const val TAPE_HANDOFF = 0.35f
 private const val STAGE_END = 3.1f
-private const val CARD_FADE = 0.12f
 internal const val TAPE_LOADED = TAPE_HANDOFF + STAGE_END
 private const val TAPE_LOAD_MS = 3450
 private const val FLIGHT_END = 1.45f
@@ -150,48 +164,70 @@ private const val SLIDE_IN = 0.12f
 private const val FOCAL_MM = 28.0
 private const val TAN_HALF_FOV = (12.0 / FOCAL_MM).toFloat()
 
+/** Cassettes 3D du carrousel : une par album de la fenêtre dessinée (instances du modèle, textures et géométrie partagées). */
+private const val CAROUSEL_SLOTS = 2 * CAROUSEL_WINDOW + 1
+/** Recul (mètres, par album d'écart) des cassettes du carrousel, pour qu'elles se recouvrent comme les pochettes 2D. */
+private const val CAROUSEL_DEPTH = 0.04f
+/** Fondu des cassettes 2D (affichées pendant le chargement) sur leurs jumelles 3D. */
+private const val CARDS_FADE_MS = 200
+
 /**
- * Walkman plein écran en paysage. La cassette touchée devient la cassette 3D au même endroit, vole jusqu'au walkman qui
- * arrive debout, s'y range, puis le walkman se couche et remplit l'écran. Ses commandes : touche orange = lecture / pause,
- * glisser à gauche / à droite = piste suivante / précédente, toucher la porte = éjecter. La liste des titres se tire du bord
- * gauche. Retour / éjection : tout se rejoue à l'envers jusqu'à la place de la cassette dans le carrousel.
+ * Mode walkman en paysage, dans une seule scène 3D : le carrousel de cassettes (une instance du modèle par album visible),
+ * puis, quand on touche la cassette centrale, elle vole jusqu'au walkman qui arrive debout, s'y range, et le walkman se
+ * couche et remplit l'écran. Ses commandes : touche orange = lecture / pause, glisser à gauche / à droite = piste suivante /
+ * précédente, toucher la porte = éjecter. La liste des titres se tire du bord gauche. Retour / éjection : tout se rejoue à
+ * l'envers jusqu'à la place de la cassette dans le carrousel. [carousel] (le carrousel 2D) reçoit les gestes du carrousel et
+ * montre ses cassettes dessinées tant que la scène se charge.
  */
 @Composable
-internal fun WalkmanScene(
-    album: Album,
+internal fun WalkmanDeck(
+    albums: List<Album>,
+    position: Animatable<Float, AnimationVector1D>,
+    tapeAlbum: Album?,
     vm: MainViewModel,
     progress: Animatable<Float, AnimationVector1D>,
     coverSize: Dp,
     coverTop: Dp,
-    cardSettled: () -> Boolean,
+    centerGapPx: Float,
+    stackGapPx: Float,
+    cardsAlpha: Animatable<Float, AnimationVector1D>,
+    flipAngles: Map<Long, Float>,
     carousel: @Composable () -> Unit,
     onEjected: () -> Unit,
 ) {
     val player by vm.player.state.collectAsStateWithLifecycle()
-    val tracks by remember(album.id) { vm.albumTracks(album.id) }.collectAsStateWithLifecycle(emptyList())
+    val albumId = tapeAlbum?.id
+    val tracks by remember(albumId) { if (albumId == null) flowOf(emptyList()) else vm.albumTracks(albumId) }
+        .collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
     val hostView = LocalView.current
+    // Sans clé : la scène peut appeler l'éjection d'une composition précédente, qui doit lire le même état.
     var ejecting by remember { mutableStateOf(false) }
-    var sceneOn by remember { mutableStateOf(false) }
-    var ready by remember { mutableStateOf(false) }
+    var shown by remember { mutableStateOf(false) }
+    var othersGone by remember { mutableStateOf(false) }
+    var labelFor by remember { mutableStateOf<Long?>(null) }
     val playingAlbumId by rememberUpdatedState(player.metadata.extras?.getLong(MediaItemMapper.EXTRA_ALBUM_ID, -1L))
     val loaded by remember { derivedStateOf { progress.value >= TAPE_LOADED } }
+    val staged by remember(albumId) { derivedStateOf { albumId != null && progress.value > TAPE_HANDOFF } }
+    val tapeIndex by rememberUpdatedState(albums.indexOfFirst { it.id == albumId })
 
-    // Tout de suite, les autres cassettes s'écartent ; puis la scène 3D se charge (le chargement du modèle bloque l'affichage
-    // un instant), la cassette du carrousel restant affichée tant que sa jumelle 3D n'est pas à l'écran au même endroit.
-    LaunchedEffect(album.id) {
-        progress.animateTo(TAPE_HANDOFF, tween((TAPE_HANDOFF * 1000).roundToInt(), easing = LinearEasing))
-        sceneOn = true
+    LaunchedEffect(shown) {
+        if (shown) cardsAlpha.animateTo(0f, tween(CARDS_FADE_MS, easing = LinearEasing))
     }
-    LaunchedEffect(album.id, ready) {
+    // Tout de suite, les autres cassettes s'écartent ; la cassette touchée part quand la scène et son étiquette sont prêtes.
+    LaunchedEffect(albumId) {
+        if (albumId != null) progress.animateTo(TAPE_HANDOFF, tween((TAPE_HANDOFF * 1000).roundToInt(), easing = LinearEasing))
+    }
+    val ready = albumId != null && shown && labelFor == albumId
+    LaunchedEffect(albumId, ready) {
         if (!ready) return@LaunchedEffect
-        snapshotFlow { cardSettled() }.first { it }
+        snapshotFlow { abs(position.value - tapeIndex) < 0.01f && progress.value >= TAPE_HANDOFF }.first { it }
         if (!ejecting) progress.animateTo(TAPE_LOADED, tween((STAGE_END * 1000).roundToInt(), easing = LinearEasing))
     }
-    LaunchedEffect(album.id, tracks.isNotEmpty()) {
-        if (tracks.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(albumId, tracks.isNotEmpty()) {
+        if (albumId == null || tracks.isEmpty()) return@LaunchedEffect
         snapshotFlow { progress.value >= TAPE_LOADED }.first { it }
-        if (!ejecting && playingAlbumId != album.id) vm.play(tracks, 0)
+        if (!ejecting && playingAlbumId != albumId) vm.play(tracks, 0)
     }
     LaunchedEffect(Unit) {
         snapshotFlow { progress.value >= DOOR_SHUT }.distinctUntilChanged().drop(1).collect {
@@ -211,10 +247,11 @@ internal fun WalkmanScene(
         if (player.isPlaying) vm.player.togglePlay()
         scope.launch {
             progress.animateTo(0f, tween((TAPE_LOAD_MS * 0.85f * progress.value / TAPE_LOADED).roundToInt(), easing = LinearEasing))
+            ejecting = false
             onEjected()
         }
     }
-    BackHandler { eject() }
+    BackHandler(enabled = albumId != null) { eject() }
     val drawerShown by remember { derivedStateOf { drawer.value > 0f || drawer.targetValue > 0f } }
     BackHandler(enabled = drawerShown) { settleDrawer(false) }
 
@@ -226,15 +263,21 @@ internal fun WalkmanScene(
         val card = CardRect(cx = w / 2f, cy = with(density) { coverTop.toPx() } + coverPx / 2f, height = coverPx, viewW = w, viewH = h)
         val controls = loaded && !ejecting
 
-        if (sceneOn) Walkman3D(
-            progress = progress,
+        TapeDeck3D(
+            albums = albums,
+            position = position,
+            centerGapPx = centerGapPx,
+            stackGapPx = stackGapPx,
             card = card,
+            tapeAlbum = tapeAlbum,
+            progress = progress,
+            flipAngles = flipAngles,
+            warming = { cardsAlpha.value > 0f },
             spinning = player.isPlaying && loaded,
-            artworkPath = album.artworkPath,
-            title = album.title,
-            artist = album.artist,
             controlsEnabled = controls,
-            onReady = { ready = true },
+            onShown = { shown = true },
+            onOthersGone = { othersGone = it },
+            onLabel = { labelFor = it },
             onPlayButton = { vm.player.togglePlay() },
             onDoor = ::eject,
             onNext = { vm.player.next() },
@@ -242,112 +285,147 @@ internal fun WalkmanScene(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Le carrousel, par-dessus la scène, le temps que les autres cassettes s'écartent ; puis une copie de la cassette
-        // touchée s'efface en 120 ms sur la cassette 3D placée exactement au même endroit.
-        val carouselShown by remember { derivedStateOf { progress.value < TAPE_HANDOFF } }
-        if (carouselShown) carousel()
-        val cardShown by remember { derivedStateOf { progress.value < TAPE_HANDOFF + CARD_FADE } }
-        if (cardShown) {
-            CassetteCard(
-                album,
-                Modifier
-                    .offset { IntOffset(((w - coverPx) / 2f).roundToInt(), (card.cy - coverPx / 2f).roundToInt()) }
-                    .size(coverSize)
-                    .graphicsLayer { alpha = 1f - ((progress.value - TAPE_HANDOFF) / CARD_FADE).coerceIn(0f, 1f) },
+        // L'image de la scène peut suivre l'interface avec retard : le voile reste tant que la scène n'a pas rendu une image
+        // sans les autres cassettes.
+        if (!staged || !othersGone) {
+            CarouselShade(
+                windowX = { w / 2f + carouselOffset(tapeIndex - position.value, centerGapPx, stackGapPx) },
+                windowHalf = coverPx / CASSETTE_RATIO / 2f,
+                fade = { if (albumId != null) (progress.value / TAPE_HANDOFF).coerceIn(0f, 1f) else 0f },
+                modifier = Modifier.fillMaxSize(),
             )
         }
+        if (!staged) carousel()
 
-        // Titre en cours, quelques secondes à chaque changement de piste.
-        var toast by remember { mutableStateOf(false) }
-        LaunchedEffect(player.mediaId, loaded) {
-            if (!loaded || player.mediaId == null) return@LaunchedEffect
-            toast = true
-            delay(3000)
-            toast = false
-        }
-        val toastAlpha by animateFloatAsState(if (toast && !ejecting) 1f else 0f, tween(if (toast) 250 else 700), label = "toast")
-        val current = tracks.firstOrNull { it.id == player.mediaId }
-        if (toastAlpha > 0f && current != null) {
-            Column(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 14.dp)
-                    .widthIn(max = 420.dp)
-                    .graphicsLayer { alpha = toastAlpha; translationY = (1f - toastAlpha) * 12.dp.toPx() }
-                    .background(Color(0xCC0E0E11), RoundedCornerShape(14.dp))
-                    .padding(horizontal = 18.dp, vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(current.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-                Text(current.artist, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        if (tapeAlbum != null) {
+            // Titre en cours, quelques secondes à chaque changement de piste.
+            var toast by remember { mutableStateOf(false) }
+            LaunchedEffect(player.mediaId, loaded) {
+                if (!loaded || player.mediaId == null) return@LaunchedEffect
+                toast = true
+                delay(3000)
+                toast = false
             }
-        }
+            val toastAlpha by animateFloatAsState(if (toast && !ejecting) 1f else 0f, tween(if (toast) 250 else 700), label = "toast")
+            val current = tracks.firstOrNull { it.id == player.mediaId }
+            if (toastAlpha > 0f && current != null) {
+                Column(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 14.dp)
+                        .widthIn(max = 420.dp)
+                        .graphicsLayer { alpha = toastAlpha; translationY = (1f - toastAlpha) * 12.dp.toPx() }
+                        .background(Color(0xCC0E0E11), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(current.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Text(current.artist, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                }
+            }
 
-        // ---- Volet des titres, tiré depuis le bord gauche ----
-        val panelW = minOf(w * 0.42f, with(density) { 400.dp.toPx() })
-        val dragDrawer = Modifier.pointerInput(panelW) {
-            val tracker = VelocityTracker()
-            detectHorizontalDragGestures(
-                onDragStart = { tracker.resetTracking(); scope.launch { drawer.stop() } },
-                onDragEnd = {
-                    val v = tracker.calculateVelocity().x
-                    settleDrawer(if (abs(v) > 600f) v > 0f else drawer.value > 0.5f)
-                },
-                onDragCancel = { settleDrawer(drawer.value > 0.5f) },
-            ) { change, dx ->
-                tracker.addPosition(change.uptimeMillis, change.position)
-                scope.launch { drawer.snapTo((drawer.value + dx / panelW).coerceIn(0f, 1f)) }
+            // ---- Volet des titres, tiré depuis le bord gauche ----
+            val panelW = minOf(w * 0.42f, with(density) { 400.dp.toPx() })
+            val dragDrawer = Modifier.pointerInput(panelW) {
+                val tracker = VelocityTracker()
+                detectHorizontalDragGestures(
+                    onDragStart = { tracker.resetTracking(); scope.launch { drawer.stop() } },
+                    onDragEnd = {
+                        val v = tracker.calculateVelocity().x
+                        settleDrawer(if (abs(v) > 600f) v > 0f else drawer.value > 0.5f)
+                    },
+                    onDragCancel = { settleDrawer(drawer.value > 0.5f) },
+                ) { change, dx ->
+                    tracker.addPosition(change.uptimeMillis, change.position)
+                    scope.launch { drawer.snapTo((drawer.value + dx / panelW).coerceIn(0f, 1f)) }
+                }
             }
-        }
-        if (controls) {
-            // Poignée : zone exclue du geste « retour » du système, sinon le glissement depuis le bord éjecterait.
-            Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .size(32.dp, 200.dp)
-                    .systemGestureExclusion()
-                    .then(dragDrawer)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { settleDrawer(true) },
-            ) {
+            if (controls) {
+                // Poignée : zone exclue du geste « retour » du système, sinon le glissement depuis le bord éjecterait.
                 Box(
                     Modifier
                         .align(Alignment.CenterStart)
-                        .offset(x = 6.dp)
-                        .size(5.dp, 56.dp)
-                        .graphicsLayer { alpha = 1f - drawer.value }
-                        .background(Color.White.copy(alpha = 0.45f), RoundedCornerShape(3.dp)),
+                        .size(32.dp, 200.dp)
+                        .systemGestureExclusion()
+                        .then(dragDrawer)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { settleDrawer(true) },
+                ) {
+                    Box(
+                        Modifier
+                            .align(Alignment.CenterStart)
+                            .offset(x = 6.dp)
+                            .size(5.dp, 56.dp)
+                            .graphicsLayer { alpha = 1f - drawer.value }
+                            .background(Color.White.copy(alpha = 0.45f), RoundedCornerShape(3.dp)),
+                    )
+                }
+            }
+            if (drawerShown) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = drawer.value }
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .pointerInput(Unit) { detectTapGestures { settleDrawer(false) } }
+                        .then(dragDrawer),
                 )
+                val thumb = with(density) { 72.dp.toPx() }
+                Box(
+                    Modifier
+                        .width(with(density) { panelW.toDp() })
+                        .fillMaxHeight()
+                        .graphicsLayer { translationX = -(1f - drawer.value) * panelW }
+                        .shadow(16.dp)
+                        .background(Color(0xFF101013))
+                        .then(dragDrawer),
+                ) {
+                    TrackPanel(
+                        album = tapeAlbum,
+                        tracks = tracks,
+                        playingId = player.mediaId,
+                        headerSpace = thumb,
+                        onPlay = { vm.play(tracks, it); settleDrawer(false) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Artwork(tapeAlbum.artworkPath, Modifier.offset(20.dp, 20.dp).size(72.dp).clip(RoundedCornerShape(4.dp)))
+                }
             }
         }
-        if (drawerShown) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = drawer.value }
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .pointerInput(Unit) { detectTapGestures { settleDrawer(false) } }
-                    .then(dragDrawer),
+    }
+}
+
+/**
+ * Ce que le carrousel 2D obtient par transparence, posé en noir sur la scène 3D (fond noir) : les bords qui se fondent dans
+ * le noir et, quand une cassette est choisie, toutes les autres qui s'effacent ([fade] 0 → 1) autour de [windowX].
+ */
+@Composable
+private fun CarouselShade(windowX: () -> Float, windowHalf: Float, fade: () -> Float, modifier: Modifier) {
+    Canvas(modifier) {
+        val edge = size.width * 0.12f
+        drawRect(
+            Brush.horizontalGradient(0f to Color.Black, 1f to Color.Transparent, startX = 0f, endX = edge),
+            size = Size(edge, size.height),
+        )
+        drawRect(
+            Brush.horizontalGradient(0f to Color.Transparent, 1f to Color.Black, startX = size.width - edge, endX = size.width),
+            topLeft = Offset(size.width - edge, 0f), size = Size(edge, size.height),
+        )
+        val f = fade()
+        if (f > 0f) {
+            val shade = Color.Black.copy(alpha = f)
+            val feather = 24.dp.toPx()
+            val l = windowX() - windowHalf
+            val r = windowX() + windowHalf
+            drawRect(shade, size = Size((l - feather).coerceAtLeast(0f), size.height))
+            drawRect(
+                Brush.horizontalGradient(0f to shade, 1f to Color.Transparent, startX = l - feather, endX = l),
+                topLeft = Offset(l - feather, 0f), size = Size(feather, size.height),
             )
-            val thumb = with(density) { 72.dp.toPx() }
-            Box(
-                Modifier
-                    .width(with(density) { panelW.toDp() })
-                    .fillMaxHeight()
-                    .graphicsLayer { translationX = -(1f - drawer.value) * panelW }
-                    .shadow(16.dp)
-                    .background(Color(0xFF101013))
-                    .then(dragDrawer),
-            ) {
-                TrackPanel(
-                    album = album,
-                    tracks = tracks,
-                    playingId = player.mediaId,
-                    headerSpace = thumb,
-                    onPlay = { vm.play(tracks, it); settleDrawer(false) },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                Artwork(album.artworkPath, Modifier.offset(20.dp, 20.dp).size(72.dp).clip(RoundedCornerShape(4.dp)))
-            }
+            drawRect(
+                Brush.horizontalGradient(0f to Color.Transparent, 1f to shade, startX = r, endX = r + feather),
+                topLeft = Offset(r, 0f), size = Size(feather, size.height),
+            )
+            drawRect(shade, topLeft = Offset(r + feather, 0f), size = Size((size.width - r - feather).coerceAtLeast(0f), size.height))
         }
     }
 }
@@ -459,6 +537,25 @@ private class WalkmanStage(
 
     fun warmUp(): Mat4 = translation(cardPos + Float3(0f, 0f, -0.03f)) * rotation(qStand) * scale(Float3(0.2f)) * translation(-center)
 
+    /** Cassette rangée, porte fermée (transformation locale du nœud CassetteRig). */
+    val restingCassette: Mat4 get() = rigBase
+
+    /**
+     * Cassette du carrousel (repère du monde), comme la pochette 2D : décalée de [dxPx] px depuis le centre, pivotée de
+     * [degrees] autour de la verticale, réduite à [s]. Au centre, c'est exactement la cassette de départ du vol.
+     */
+    fun carouselCassette(dxPx: Float, degrees: Float, s: Float, depth: Float): Mat4 {
+        val flat = cardPos + Float3(dxPx * metersPerPx, 0f, 0f)
+        // Le pivot de la pochette 2D se mesure face à elle ; ici, la caméra voit de biais les cassettes écartées du centre.
+        val sight = Math.toDegrees(atan2(flat.x, d0 - flat.z).toDouble()).toFloat()
+        // Reculée de [depth] sur sa ligne de visée et agrandie d'autant : même image, mais les cassettes proches du centre
+        // passent vraiment devant les suivantes (en 2D, l'ordre de dessin s'en charge).
+        val k = 1f + depth / (d0 - flat.z)
+        val eye = Float3(0f, 0f, d0)
+        val pos = eye + (flat - eye) * k
+        return translation(pos) * rotation(axisAngle(AXIS_Y, degrees - sight) * cardQ) * scale(rigScale * (s * k))
+    }
+
     fun doorDegrees(p: Float) =
         if (p < FLIGHT_END) DOOR_OPEN_DEG * smooth(seg(p, 0.35f, 0.95f))
         else DOOR_OPEN_DEG * (1f - doorCloseEase(seg(p, SLIDE_END, CLOSE_END)))
@@ -524,20 +621,105 @@ private class WalkmanStage(
     }
 }
 
+
+/** Le modèle, chargé une fois en [CAROUSEL_SLOTS] + 1 instances qui partagent géométrie, matériaux et textures. */
+private class DeckAsset(private val modelLoader: ModelLoader, buffer: Buffer) {
+    val instances = arrayOfNulls<FilamentInstance>(CAROUSEL_SLOTS + 1)
+    private val asset = modelLoader.assetLoader.createInstancedAsset(buffer, instances)!!
+
+    init {
+        // Textures décodées en tâche de fond, envoyées au GPU image par image (asyncUpdateLoad).
+        check(modelLoader.resourceLoader.asyncBeginLoad(asset))
+    }
+
+    val loaded get() = modelLoader.resourceLoader.asyncGetLoadProgress() >= 1f
+
+    fun destroy() {
+        modelLoader.resourceLoader.asyncCancelLoad()
+        modelLoader.assetLoader.destroyAsset(asset)
+    }
+}
+
+/** Instance 0 : le walkman (sa cassette part du carrousel) ; les suivantes : les cassettes du carrousel. */
+private class Deck(engine: Engine, instances: Array<FilamentInstance?>) {
+    val walkman = ModelNode(modelInstance = instances[0]!!, autoAnimate = false).apply {
+        // Seules la touche orange et la porte reçoivent les touchers (boîtes englobantes, la touche agrandie).
+        isTouchable = false
+        collisionShape = null
+        renderableNodes.filter { it.name == "BtnPlay" || it.name == "Door" }.forEach { node ->
+            val box = node.axisAlignedBoundingBox
+            val grow = if (node.name == "BtnPlay") 1.8f else 1f
+            node.collisionShape = CollisionBox(
+                CollisionVector(box.halfExtent[0] * 2f * grow, box.halfExtent[1] * 2f * grow, box.halfExtent[2] * 2f * grow),
+                CollisionVector(box.center[0], box.center[1], box.center[2]),
+            )
+            node.isTouchable = true
+        }
+        isVisible = false
+    }
+    val door = walkman.nodes.first { it.name == "Door" }
+    val rig = walkman.nodes.first { it.name == "CassetteRig" }
+    val hubs = walkman.nodes.filter { it.name == "HubL" || it.name == "HubR" }
+    val hubBase = hubs.associateWith { it.rotation }
+    val btn = walkman.nodes.first { it.name == "BtnPlay" }
+    val btnBase = btn.position
+    val label = walkman.renderableNodes.first { it.name == "Label" }
+    val rigPos = rig.position
+    val rigQ = rig.quaternion
+    val rigScale = rig.scale
+    val hinge = door.position
+    val slots = instances.drop(1).map { CarouselSlot(ModelNode(modelInstance = it!!, autoAnimate = false), engine) }
+    /** Dans la scène : le walkman entier, et seulement la cassette (CassetteRig) des autres instances. */
+    val nodes: List<Node> = listOf(walkman) + slots.map { it.rig }
+}
+
+/** Une cassette du carrousel, attribuée à l'album [albumId] tant qu'il est dans la fenêtre dessinée. */
+private class CarouselSlot(model: ModelNode, engine: Engine) {
+    val rig = model.nodes.first { it.name == "CassetteRig" }
+    val label = model.renderableNodes.first { it.name == "Label" }
+    val texture = TextureSlot(engine)
+    var albumId: Long? = null
+    var labelled = false
+    var job: Job? = null
+
+    init {
+        model.isTouchable = false
+        model.collisionShape = null
+        model.nodes.forEach { it.isTouchable = false; it.collisionShape = null }
+        rig.isVisible = false
+    }
+}
+
+/** Texture d'un pixel, branchée sur les étiquettes libérées avant la destruction de leur texture. */
+private fun blankTexture(engine: Engine): Texture =
+    Texture.Builder().width(1).height(1).levels(1).sampler(Texture.Sampler.SAMPLER_2D).format(Texture.InternalFormat.SRGB8_A8)
+        .build(engine).apply {
+            val pixel = ByteBuffer.allocateDirect(4).put(byteArrayOf(46, 46, 52, -1)).flip()
+            setImage(engine, 0, Texture.PixelBufferDescriptor(pixel, Texture.Format.RGBA, Texture.Type.UBYTE))
+        }
+
 /**
- * Scène 3D plein écran (sous l'interface : le volet et le titre se dessinent par-dessus). Toute l'animation est calculée
- * à chaque image depuis [progress], sans recomposition. Commandes du modèle actives quand [controlsEnabled].
+ * Scène 3D plein écran (sous la fenêtre : le carrousel 2D, le volet et le titre se dessinent par-dessus). Toute l'animation
+ * est calculée à chaque image depuis [position] (carrousel) et [progress] (walkman), sans recomposition. Commandes du
+ * walkman actives quand [controlsEnabled]. [onShown] : le carrousel 3D est réellement à l'écran. [onOthersGone] : le GPU a
+ * rendu (true) une image où seule la cassette choisie reste du carrousel, ou les autres cassettes reviennent (false).
  */
 @Composable
-private fun Walkman3D(
-    progress: Animatable<Float, AnimationVector1D>,
+private fun TapeDeck3D(
+    albums: List<Album>,
+    position: Animatable<Float, AnimationVector1D>,
+    centerGapPx: Float,
+    stackGapPx: Float,
     card: CardRect,
+    tapeAlbum: Album?,
+    progress: Animatable<Float, AnimationVector1D>,
+    flipAngles: Map<Long, Float>,
+    warming: () -> Boolean,
     spinning: Boolean,
-    artworkPath: String?,
-    title: String,
-    artist: String,
     controlsEnabled: Boolean,
-    onReady: () -> Unit,
+    onShown: () -> Unit,
+    onOthersGone: (Boolean) -> Unit,
+    onLabel: (Long) -> Unit,
     onPlayButton: () -> Unit,
     onDoor: () -> Unit,
     onNext: () -> Unit,
@@ -546,6 +728,7 @@ private fun Walkman3D(
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
+    val scope = rememberCoroutineScope()
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
     val view = rememberView(engine) {
@@ -559,73 +742,104 @@ private fun Walkman3D(
         }
     }
     val cameraNode = rememberCameraNode(engine) { focalLength = FOCAL_MM }
-    val model = remember(modelLoader) {
-        ModelNode(modelInstance = modelLoader.createModelInstance(WALKMAN_MODEL), autoAnimate = false).apply {
-            // Seules la touche orange et la porte reçoivent les touchers (boîtes englobantes, la touche agrandie).
-            isTouchable = false
-            collisionShape = null
-            renderableNodes.filter { it.name == "BtnPlay" || it.name == "Door" }.forEach { node ->
-                val box = node.axisAlignedBoundingBox
-                val grow = if (node.name == "BtnPlay") 1.8f else 1f
-                node.collisionShape = CollisionBox(
-                    CollisionVector(box.halfExtent[0] * 2f * grow, box.halfExtent[1] * 2f * grow, box.halfExtent[2] * 2f * grow),
-                    CollisionVector(box.center[0], box.center[1], box.center[2]),
-                )
-                node.isTouchable = true
-            }
+
+    var asset by remember { mutableStateOf<DeckAsset?>(null) }
+    var deck by remember { mutableStateOf<Deck?>(null) }
+    DisposableEffect(modelLoader) { onDispose { asset?.destroy() } }
+    LaunchedEffect(modelLoader) {
+        val buffer = withContext(Dispatchers.IO) { context.assets.readBuffer(WALKMAN_MODEL) }
+        val loading = DeckAsset(modelLoader, buffer).also { asset = it }
+        while (!loading.loaded) withFrameNanos { modelLoader.resourceLoader.asyncUpdateLoad() }
+        deck = Deck(engine, loading.instances)
+    }
+    val stage = remember(deck, card) {
+        deck?.let { d ->
+            val bounds = d.walkman.modelInstance.asset.boundingBox
+            WalkmanStage(
+                card = card,
+                rigPos = d.rigPos,
+                rigQ = d.rigQ,
+                rigScale = d.rigScale,
+                hinge = d.hinge,
+                center = Float3(bounds.center[0], bounds.center[1], bounds.center[2]),
+                halfExtent = Float3(bounds.halfExtent[0], bounds.halfExtent[1], bounds.halfExtent[2]),
+            )
         }
     }
-    val doorNode = remember(model) { model.nodes.first { it.name == "Door" } }
-    val rig = remember(model) { model.nodes.first { it.name == "CassetteRig" } }
-    val hubs = remember(model) { model.nodes.filter { it.name == "HubL" || it.name == "HubR" } }
-    val hubBase = remember(hubs) { hubs.associateWith { it.rotation } }
-    val btn = remember(model) { model.nodes.first { it.name == "BtnPlay" } }
-    val btnBase = remember(btn) { btn.position }
-    val label = remember(model) { model.renderableNodes.first { it.name == "Label" } }
-    val stage = remember(model, card) {
-        val bounds = model.modelInstance.asset.boundingBox
-        WalkmanStage(
-            card = card,
-            rigPos = rig.position,
-            rigQ = rig.quaternion,
-            rigScale = rig.scale,
-            hinge = doorNode.position,
-            center = Float3(bounds.center[0], bounds.center[1], bounds.center[2]),
-            halfExtent = Float3(bounds.halfExtent[0], bounds.halfExtent[1], bounds.halfExtent[2]),
-        )
+
+    // Étiquettes : celle du walkman en grand (1536 px), celles du carrousel à leur taille d'affichage, partagées avec les
+    // cassettes 2D ; la texture d'une cassette qui sort de la fenêtre est détruite.
+    val labelW = carouselLabelWidth(card.height)
+    val blank = remember(engine) { blankTexture(engine) }
+    val sampler = remember { TextureSampler() }
+    val walkmanLabel = remember(engine) { TextureSlot(engine) }
+    var fence by remember { mutableStateOf<Fence?>(null) }
+    var goneFence by remember { mutableStateOf<Fence?>(null) }
+    var gone by remember { mutableStateOf(false) }
+    // Une barrière créée dans onFrame passe avant le rendu de cette image : elle se pose à l'image suivante.
+    var stagedFrames by remember { mutableStateOf(0) }
+    var labelledFrames by remember { mutableStateOf(0) }
+    DisposableEffect(engine) {
+        onDispose {
+            fence?.let(engine::destroyFence)
+            goneFence?.let(engine::destroyFence)
+            deck?.slots?.forEach { it.texture.release() }
+            walkmanLabel.release()
+            engine.destroyTexture(blank)
+        }
+    }
+    LaunchedEffect(deck, tapeAlbum) {
+        val d = deck ?: return@LaunchedEffect
+        val album = tapeAlbum ?: return@LaunchedEffect
+        val bmp = withContext(Dispatchers.Default) { cassetteLabel(context, album.artworkPath, album.title, album.artist, 1536) }
+        walkmanLabel.set(d.label.materialInstance, bmp, "baseColorMap")
+        // Papier mat : moins de reflet blanc sur la pochette (elle reste fidèle à ses couleurs).
+        d.label.materialInstance.setParameter("roughnessFactor", 0.9f)
+        onLabel(album.id)
     }
 
-    val labelTexture = remember { TextureSlot(engine) }
-    var labelReady by remember { mutableStateOf(false) }
-    LaunchedEffect(artworkPath, title, artist) {
-        val bmp = withContext(Dispatchers.Default) { cassetteLabel(context, artworkPath, title, artist, 1536) }
-        labelTexture.set(label.materialInstance, bmp, "baseColorMap")
-        // Papier mat : moins de reflet blanc sur la pochette (elle reste fidèle à ses couleurs).
-        label.materialInstance.setParameter("roughnessFactor", 0.9f)
-        labelReady = true
+    fun free(slot: CarouselSlot) {
+        slot.job?.cancel()
+        slot.albumId = null
+        slot.labelled = false
+        slot.rig.isVisible = false
+        slot.label.materialInstance.setParameter("baseColorMap", blank, sampler)
+        slot.texture.release()
     }
-    // Prête quand une image avec l'étiquette est vraiment sortie du GPU.
+
+    fun assign(slot: CarouselSlot, album: Album) {
+        slot.albumId = album.id
+        slot.job = scope.launch {
+            val bmp = carouselLabel(context, album, labelW)
+            slot.texture.set(slot.label.materialInstance, bmp, "baseColorMap")
+            slot.label.materialInstance.setParameter("roughnessFactor", 0.9f)
+            slot.labelled = true
+        }
+    }
+
+    // Le carrousel 3D est affiché quand une image avec toutes ses étiquettes est sortie du GPU, puis réellement à l'écran
+    // (l'affichage d'une SurfaceView suit le GPU avec retard) : alors seulement les cassettes 2D s'effacent.
     var sceneView by remember { mutableStateOf<SceneView?>(null) }
-    var readyFence by remember { mutableStateOf<Fence?>(null) }
-    var readyState by remember { mutableStateOf(0) }
-    DisposableEffect(engine) { onDispose { readyFence?.let(engine::destroyFence); labelTexture.release() } }
-    // Puis attendre que la cassette soit réellement à l'écran : l'affichage d'une SurfaceView suit le GPU avec retard.
-    LaunchedEffect(readyState == 2) {
-        if (readyState != 2) return@LaunchedEffect
+    var shownState by remember { mutableStateOf(0) }
+    LaunchedEffect(shownState == 2) {
+        if (shownState != 2) return@LaunchedEffect
         val surface = sceneView ?: return@LaunchedEffect
-        val probe = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
-        val x = card.cx.roundToInt()
         val y = card.cy.roundToInt()
-        val area = Rect(x - 4, y - 4, x + 4, y + 4)
+        val probe = Bitmap.createBitmap(card.viewW.roundToInt(), 1, Bitmap.Config.ARGB_8888)
+        val row = IntArray(probe.width)
+        val area = Rect(0, y, probe.width, y + 1)
         val main = Handler(Looper.getMainLooper())
         while (true) {
             val result = suspendCancellableCoroutine { cont -> PixelCopy.request(surface, area, probe, { cont.resume(it) }, main) }
-            if (result == PixelCopy.SUCCESS && android.graphics.Color.alpha(probe.getPixel(4, 4)) > 0) break
+            if (result == PixelCopy.SUCCESS) {
+                probe.getPixels(row, 0, probe.width, 0, 0, probe.width, 1)
+                if (row.any { android.graphics.Color.alpha(it) > 0 }) break
+            }
             delay(40)
         }
         probe.recycle()
-        readyState = 3
-        onReady()
+        shownState = 3
+        onShown()
     }
 
     var pressedAt by remember { mutableStateOf(0L) }
@@ -658,19 +872,22 @@ private fun Walkman3D(
         }
     }
 
+    val albumList by rememberUpdatedState(albums)
+    val tape by rememberUpdatedState(tapeAlbum)
+    val warm by rememberUpdatedState(warming)
     val spin by rememberUpdatedState(spinning)
     var angle by remember { mutableStateOf(0f) }
     var speed by remember { mutableStateOf(0f) }
 
     Scene(
-        // Sous la fenêtre (et non au-dessus comme par défaut quand le fond est transparent) : le volet et le titre restent visibles.
+        // Sous la fenêtre (et non au-dessus comme par défaut quand le fond est transparent) : l'interface reste visible.
         onViewCreated = { sceneView = this; setZOrderOnTop(false) },
         modifier = modifier,
         engine = engine,
         modelLoader = modelLoader,
         view = view,
         cameraNode = cameraNode,
-        childNodes = listOf(model),
+        childNodes = deck?.nodes ?: emptyList(),
         isOpaque = false,
         cameraManipulator = null,
         onGestureListener = gestures,
@@ -692,15 +909,60 @@ private fun Walkman3D(
             }
             false
         },
-        onFrame = { frameTimeNanos ->
-            val p = (progress.value - TAPE_HANDOFF).coerceAtLeast(0f)
-            // Avant le départ, le walkman est dessiné en tout petit derrière la cassette : ses shaders sont compilés pendant
-            // l'attente, son entrée ne saccade pas.
-            val m = if (readyState < 3) stage.warmUp() else stage.model(p)
-            model.transform = m
-            doorNode.rotation = Rotation(z = -stage.doorDegrees(p))
-            rig.transform = stage.cassetteLocal(p, m)
-            val (eye, target) = stage.camera(p, frameTimeNanos / 1_000_000_000.0)
+        onFrame = onFrame@{ frameTimeNanos ->
+            val d = deck ?: return@onFrame
+            val st = stage ?: return@onFrame
+            val tapeId = tape?.id
+            val prog = progress.value
+            // Pendant le vol, la cassette est celle du walkman ; celles du carrousel sont cachées.
+            val staged = tapeId != null && prog > TAPE_HANDOFF
+            val p = if (tapeId != null) (prog - TAPE_HANDOFF).coerceAtLeast(0f) else 0f
+
+            // ---- Carrousel : une instance par album de la fenêtre, posée comme la pochette 2D ----
+            val list = albumList
+            val center = position.value
+            val first = (center - CAROUSEL_WINDOW).toInt().coerceAtLeast(0)
+            val last = (center + CAROUSEL_WINDOW).toInt().coerceAtMost(list.lastIndex)
+            val wanted = (first..last).map { list[it].id }
+            d.slots.forEach { if (it.albumId != null && it.albumId !in wanted) free(it) }
+            val fade = if (tapeId != null) (prog / TAPE_HANDOFF).coerceIn(0f, 1f) else 0f
+            var allLabelled = true
+            for (i in first..last) {
+                val album = list[i]
+                val slot = d.slots.firstOrNull { it.albumId == album.id }
+                    ?: d.slots.first { it.albumId == null }.also { assign(it, album) }
+                val dd = i - center
+                val tilt = dd.coerceIn(-1f, 1f)
+                val turn = flipAngles[album.id] ?: 0f
+                // Les autres cassettes s'écartent (et s'effacent sous CarouselShade).
+                val spread = if (tapeId != null && album.id != tapeId) sign(dd) * card.height * 0.5f * fade else 0f
+                // Retournée (« i ») comme la pochette 2D ; passé la tranche, la face arrière 2D (opaque, plus large) la couvre.
+                slot.rig.transform = st.carouselCassette(
+                    carouselOffset(dd, centerGapPx, stackGapPx) + spread,
+                    tilt * CAROUSEL_TILT_DEG + turn,
+                    1f - CAROUSEL_SHRINK * abs(tilt) + 0.12f * (turn / 180f),
+                    CAROUSEL_DEPTH * abs(dd),
+                )
+                slot.rig.isVisible = slot.labelled && !staged
+                allLabelled = allLabelled && slot.labelled
+            }
+
+            // ---- Walkman ----
+            // Pendant le chargement (carrousel 2D encore affiché), il est dessiné en tout petit derrière la cassette
+            // centrale : ses shaders sont compilés d'avance, son entrée ne saccade pas.
+            val warmUp = warm()
+            d.walkman.isVisible = staged || warmUp
+            if (staged) {
+                val m = st.model(p)
+                d.walkman.transform = m
+                d.door.rotation = Rotation(z = -st.doorDegrees(p))
+                d.rig.transform = st.cassetteLocal(p, m)
+            } else if (warmUp) {
+                d.walkman.transform = st.warmUp()
+                d.door.rotation = Rotation(z = 0f)
+                d.rig.transform = st.restingCassette
+            }
+            val (eye, target) = st.camera(p, frameTimeNanos / 1_000_000_000.0)
             cameraNode.position = eye
             cameraNode.lookAt(target)
 
@@ -708,23 +970,41 @@ private fun Walkman3D(
             val goal = if (now < boostUntil) boostDir * 30f else if (spin) 6f else 0f
             speed += (goal - speed) * 0.08f
             angle = (angle + speed) % 360f
-            hubs.forEach { hub -> hub.rotation = hubBase.getValue(hub).let { Rotation(it.x, it.y + angle, it.z) } }
+            d.hubs.forEach { hub -> hub.rotation = d.hubBase.getValue(hub).let { Rotation(it.x, it.y + angle, it.z) } }
 
             val elapsed = now - pressedAt
             val depth = if (elapsed in 0 until 220) {
                 val u = elapsed / 220f
                 0.002f * (if (u < 0.35f) u / 0.35f else (1f - u) / 0.65f)
             } else 0f
-            btn.position = Position(btnBase.x, btnBase.y - depth, btnBase.z)
+            d.btn.position = Position(d.btnBase.x, d.btnBase.y - depth, d.btnBase.z)
 
-            if (labelReady && readyState == 0) {
-                readyFence = engine.createFence()
-                readyState = 1
-            } else if (readyState == 1) readyFence?.let { fence ->
-                if (fence.wait(Fence.Mode.DONT_FLUSH, 0) == Fence.FenceStatus.CONDITION_SATISFIED) {
-                    engine.destroyFence(fence)
-                    readyFence = null
-                    readyState = 2
+            stagedFrames = if (staged) stagedFrames + 1 else 0
+            labelledFrames = if (allLabelled) labelledFrames + 1 else 0
+            if (staged && !gone && stagedFrames >= 2) {
+                val f = goneFence ?: engine.createFence().also { goneFence = it }
+                if (f.wait(Fence.Mode.DONT_FLUSH, 0) == Fence.FenceStatus.CONDITION_SATISFIED) {
+                    engine.destroyFence(f)
+                    goneFence = null
+                    gone = true
+                    onOthersGone(true)
+                }
+            } else if (!staged && gone) {
+                gone = false
+                onOthersGone(false)
+            } else if (!staged) goneFence?.let { f ->
+                engine.destroyFence(f)
+                goneFence = null
+            }
+
+            if (shownState == 0 && labelledFrames >= 2) {
+                fence = engine.createFence()
+                shownState = 1
+            } else if (shownState == 1) fence?.let { f ->
+                if (f.wait(Fence.Mode.DONT_FLUSH, 0) == Fence.FenceStatus.CONDITION_SATISFIED) {
+                    engine.destroyFence(f)
+                    fence = null
+                    shownState = 2
                 }
             }
         },

@@ -1,6 +1,17 @@
 package com.tashu.player.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.draw.scale
+import com.tashu.player.domain.model.BackgroundStyle
+import com.tashu.player.domain.model.ThemeColorSource
+import com.tashu.player.domain.model.ThemeStyle
 import com.tashu.player.domain.model.UiStyle
 import android.graphics.RenderEffect as AndroidRenderEffect
 import android.graphics.RuntimeShader
@@ -138,19 +149,20 @@ half4 main(float2 coord) {
 /**
  * Verre « Clear » : fond net vu à travers une lentille, liseré lumineux (reflet en haut à gauche,
  * contre-reflet en bas à droite) et ombre interne légère. [corner] = Dp.Infinity pour une pilule ou un cercle.
- * [tint] assombrit à peine la vitre pour garder le texte lisible.
+ * [veil] voile à peine la vitre pour garder le texte lisible (fumé en mode sombre, blanc en mode clair).
  */
 fun Modifier.liquidGlass(
     backdrop: GlassBackdrop,
     corner: Dp = Dp.Infinity,
-    tint: Color = Color.Black.copy(alpha = 0.10f),
+    veil: Float = 0.10f,
     lens: Dp = 22.dp,
     frost: Dp = 0.dp,
 ): Modifier = composed {
+    val g = glassColors()
     if (isMinimal()) {
-        // Minimaliste : aplat sombre et liseré fin, sans réfraction ni reflets.
+        // Minimaliste : aplat et liseré fin, sans réfraction ni reflets.
         val shape = if (corner == Dp.Infinity) CircleShape else RoundedCornerShape(corner)
-        return@composed this.clip(shape).background(MinimalSurface).border(0.5.dp, Color.White.copy(alpha = 0.10f), shape)
+        return@composed this.clip(shape).background(g.flatSurface).border(0.5.dp, g.line(0.10f), shape)
     }
     val inner = rememberGraphicsLayer()
     var pos by remember { mutableStateOf(Offset.Zero) }
@@ -188,14 +200,16 @@ fun Modifier.liquidGlass(
             drawLayer(inner)
             val cr = CornerRadius(r)
             // Sans lentille (Android < 13), un voile plus marqué remplace la réfraction.
-            drawRoundRect(if (shader == null) Color.Black.copy(alpha = 0.35f) else tint, cornerRadius = cr)
+            drawRoundRect(g.veil(if (shader == null) 0.35f else veil), cornerRadius = cr)
             // Ombre interne : le verre paraît épais.
             drawRoundRect(
                 Brush.verticalGradient(0f to Color.White.copy(alpha = 0.10f), 0.35f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.10f)),
                 cornerRadius = cr,
             )
-            // Liseré spéculaire : vif en haut à gauche, contre-reflet en bas à droite, presque éteint ailleurs.
             val stroke = 1.2.dp.toPx()
+            // Verre clair : un contour sombre très léger détache la vitre d'un fond presque blanc.
+            if (!g.dark) drawRoundRect(g.line(0.12f), topLeft = Offset(stroke / 2, stroke / 2), size = Size(w - stroke, h - stroke), cornerRadius = CornerRadius(maxOf(r - stroke / 2, 0f)), style = Stroke(stroke))
+            // Liseré spéculaire : vif en haut à gauche, contre-reflet en bas à droite, presque éteint ailleurs.
             drawRoundRect(
                 Brush.linearGradient(
                     0f to Color.White.copy(alpha = 0.75f),
@@ -216,8 +230,9 @@ fun Modifier.liquidGlass(
  * à transparent (bas). Le contenu qui passe dessous se dissout dans le flou au lieu d'être coupé net.
  */
 fun Modifier.scrollEdgeBlur(backdrop: GlassBackdrop, radius: Dp = 28.dp): Modifier = composed {
+    val g = glassColors()
     if (isMinimal()) {
-        return@composed this.background(Brush.verticalGradient(0f to MinimalBackground, 0.75f to MinimalBackground, 1f to Color.Transparent))
+        return@composed this.background(Brush.verticalGradient(0f to g.flat, 0.75f to g.flat, 1f to Color.Transparent))
     }
     val inner = rememberGraphicsLayer()
     var pos by remember { mutableStateOf(Offset.Zero) }
@@ -231,8 +246,8 @@ fun Modifier.scrollEdgeBlur(backdrop: GlassBackdrop, radius: Dp = 28.dp): Modifi
             }
             inner.record { translate(backdrop.origin.x - pos.x, backdrop.origin.y - pos.y) { drawLayer(backdrop.layer) } }
             drawLayer(inner)
-            // Léger voile pour que le titre ressorte, sans bande noire.
-            drawRect(Color.Black.copy(alpha = 0.12f))
+            // Léger voile pour que le titre ressorte, sans bande marquée.
+            drawRect(g.veil(0.12f))
             drawRect(
                 Brush.verticalGradient(0f to Color.Black, 0.7f to Color.Black, 1f to Color.Transparent),
                 blendMode = BlendMode.DstIn,
@@ -241,11 +256,34 @@ fun Modifier.scrollEdgeBlur(backdrop: GlassBackdrop, radius: Dp = 28.dp): Modifi
         }
 }
 
-internal val GlassBorder = Color.White.copy(alpha = 0.14f)
+/** Couleurs posées sur le fond et le verre : verre fumé et encre blanche en mode sombre, verre dépoli blanc et encre sombre en mode clair. */
+@Immutable
+internal class GlassColors(val dark: Boolean) {
+    /** Texte, icônes et liserés. */
+    val ink = if (dark) Color.White else Color(0xFF16161B)
+    /** Texte posé sur une pastille pleine couleur d'encre. */
+    val onInk = if (dark) Color.Black else Color.White
+    /** Sous le fond, visible pendant les transitions. */
+    val base = if (dark) Color.Black else Color(0xFFF2F2F6)
+    val menu = if (dark) Color(0xFF1C1C1E) else Color(0xFFFAFAFC)
+    /** Minimaliste : aplat de fond et surfaces, proches d'iOS. */
+    val flat = if (dark) Color(0xFF0B0B0D) else Color(0xFFF2F2F7)
+    val flatSurface = if (dark) Color(0xFF1C1C1E) else Color.White
 
-/** Couleurs du mode minimaliste : fond presque noir, surfaces gris anthracite (proches d'iOS). */
-internal val MinimalBackground = Color(0xFF0B0B0D)
-internal val MinimalSurface = Color(0xFF1C1C1E)
+    /** Voile d'une vitre : assombrit en mode sombre, blanchit davantage en mode clair. */
+    fun veil(alpha: Float) = if (dark) Color.Black.copy(alpha = alpha) else Color.White.copy(alpha = 0.25f + alpha * 0.6f)
+    /** Remplissage d'une carte ou d'une pastille. */
+    fun fill(alpha: Float) = Color.White.copy(alpha = if (dark) alpha else (0.2f + alpha * 3f).coerceAtMost(0.85f))
+    /** Liseré ou séparateur. */
+    fun line(alpha: Float) = if (dark) Color.White.copy(alpha = alpha) else ink.copy(alpha = alpha * 0.7f)
+    val border get() = line(0.14f)
+}
+
+private val DarkGlass = GlassColors(dark = true)
+private val LightGlass = GlassColors(dark = false)
+
+@Composable
+internal fun glassColors(): GlassColors = if (isAppInDarkTheme()) DarkGlass else LightGlass
 
 @Composable
 internal fun isMinimal(): Boolean = LocalThemeSettings.current.uiStyle == UiStyle.MINIMAL
@@ -259,7 +297,7 @@ internal fun GlassCircle(haze: GlassBackdrop, icon: ImageVector, label: String, 
             .size(size.dp)
             .liquidGlass(haze),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size((size / 2).dp)) }
+    ) { Icon(icon, contentDescription = label, tint = glassColors().ink, modifier = Modifier.size((size / 2).dp)) }
 }
 
 // ---------------------------------------------------------------- Effet « bulle »
@@ -289,72 +327,142 @@ internal fun Modifier.bubbleClickable(pressedScale: Float = 0.9f, onClick: () ->
     return bubbleScale(source, pressedScale).clickable(interactionSource = source, indication = null, onClick = onClick)
 }
 
-// ---------------------------------------------------------------- Nuage de pochette
+// ---------------------------------------------------------------- Fond
 
-/**
- * Fond vivant : de grandes nappes de couleur tirées de la pochette dérivent lentement sur tout l'écran,
- * par-dessus la pochette elle-même très floutée et en lente rotation. Les couleurs glissent d'un morceau à l'autre.
- */
+/** Fond des écrans bibliothèque, album et lecteur, selon le réglage « Fond ». Le style minimaliste impose son aplat. */
 @Composable
-internal fun ArtworkCloud(artworkPath: String?, modifier: Modifier = Modifier) {
+internal fun AppBackground(artworkPath: String?, modifier: Modifier = Modifier) {
     if (isMinimal()) {
-        Box(modifier.fillMaxSize().background(MinimalBackground))
+        Box(modifier.fillMaxSize().background(glassColors().flat))
         return
     }
-    val palette by rememberArtworkPalette(artworkPath)
-    val base = palette.ifEmpty { listOf(Color(0xFF2B3A55), Color(0xFF4F6D7A), Color(0xFF3A2B55)) }
-    val colors = List(5) { i -> animateColorAsState(base[i % base.size], tween(1600), label = "cloud$i").value }
-    // Une boucle de 60 s ; les fréquences entières gardent le mouvement continu au raccord.
-    val t by rememberInfiniteTransition(label = "cloud").animateFloat(
-        0f, (2 * PI).toFloat(), infiniteRepeatable(tween(60_000, easing = LinearEasing)), label = "t",
+    when (LocalThemeSettings.current.background) {
+        BackgroundStyle.CLOUD -> ArtworkCloud(artworkPath, modifier)
+        BackgroundStyle.BLURRED_ARTWORK -> BlurredArtwork(artworkPath, modifier)
+        BackgroundStyle.PLAIN -> Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface))
+    }
+}
+
+/** Saturation appliquée à la pochette de fond selon le style des couleurs (null = couleurs d'origine). */
+@Composable
+private fun rememberStyleFilter(style: ThemeStyle): ColorFilter? = remember(style) {
+    val saturation = when (style) {
+        ThemeStyle.MONOCHROME -> 0f
+        ThemeStyle.NEUTRAL -> 0.35f
+        ThemeStyle.TONAL_SPOT -> 0.85f
+        ThemeStyle.EXPRESSIVE -> 1.2f
+        ThemeStyle.VIBRANT -> 1.5f
+        ThemeStyle.FIDELITY, ThemeStyle.RAINBOW -> return@remember null
+    }
+    ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(saturation) })
+}
+
+/** Périodes (s) de dérive horizontale, verticale et de respiration de chaque nappe. */
+private val DRIFT_X = floatArrayOf(20f, 15f, 12f, 20f, 15f)
+private val DRIFT_Y = floatArrayOf(15f, 20f, 20f, 12f, 12f)
+private val BREATH = floatArrayOf(12f, 10f, 15f, 10f, 20f)
+// Multiple de toutes les périodes ci-dessus : la boucle repart sans à-coup.
+private const val CLOUD_LOOP_S = 120
+private const val TWO_PI = (2 * PI).toFloat()
+
+/**
+ * Nuage vivant : cinq nappes de couleur (pochette, fond d'écran ou couleur fixe, passées au style des couleurs)
+ * dérivent et respirent sur des cycles de 10 à 20 s ; avec la pochette, elle-même très floutée tourne lentement dessous.
+ * Rien n'est alloué image par image : chaque nappe garde son dégradé, seule sa matrice change.
+ */
+@Composable
+private fun ArtworkCloud(artworkPath: String?, modifier: Modifier) {
+    val settings = LocalThemeSettings.current
+    val g = glassColors()
+    val deep = g.dark && settings.amoled
+    val target = rememberCloudColors(artworkPath)
+    val colors = List(target.size) { i ->
+        animateColorAsState(if (g.dark) target[i] else lerp(target[i], Color.White, 0.25f), tween(1600), label = "cloud$i").value
+    }
+    val blobAlpha = when { !g.dark -> 0.7f; deep -> 0.42f; else -> 0.5f }
+    val blobs = remember(colors, blobAlpha) { colors.map { CloudBlob(it, blobAlpha) } }
+    val blend = if (g.dark) BlendMode.Screen else BlendMode.SrcOver
+    val s by rememberInfiniteTransition(label = "cloud").animateFloat(
+        0f, CLOUD_LOOP_S.toFloat(), infiniteRepeatable(tween(CLOUD_LOOP_S * 1000, easing = LinearEasing)), label = "s",
     )
-    BoxWithConstraints(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+    val ground = when { !g.dark -> g.base; deep -> Color.Black; else -> Color(0xFF111116) }
+    BoxWithConstraints(modifier.fillMaxSize().background(ground), contentAlignment = Alignment.Center) {
         // Carré plus grand que la diagonale de l'écran : en tournant, il couvre toujours tout (pas de coin visible).
         val side = sqrt(maxWidth.value * maxWidth.value + maxHeight.value * maxHeight.value).dp * 1.15f
-        if (artworkPath != null && Build.VERSION.SDK_INT >= 31) {
+        if (settings.colorSource == ThemeColorSource.ARTWORK && artworkPath != null && Build.VERSION.SDK_INT >= 31) {
+            val filter = rememberStyleFilter(settings.style)
+            val artAlpha = if (g.dark) 0.5f else 0.45f
             Crossfade(
                 artworkPath, animationSpec = tween(1200), label = "cloudArt",
                 modifier = Modifier.wrapContentSize(unbounded = true).requiredSize(side),
             ) { path ->
                 AsyncImage(
-                    model = path, contentDescription = null, contentScale = ContentScale.Crop,
+                    model = path, contentDescription = null, contentScale = ContentScale.Crop, colorFilter = filter,
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            rotationZ = t * (180f / PI.toFloat())
-                            alpha = 0.5f
+                            rotationZ = s * 6f
+                            alpha = artAlpha
                         }
                         .blur(90.dp, BlurredEdgeTreatment.Rectangle),
                 )
             }
         }
-        val fx = intArrayOf(1, 2, 1, 3, 2)
-        val fy = intArrayOf(1, 1, 2, 1, 3)
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            val r = maxOf(w, h) * 0.55f
-            colors.forEachIndexed { i, c ->
+            val r = maxOf(w, h) * 0.45f
+            for (i in blobs.indices) {
                 val ph = i * 1.3f
-                val center = Offset(
-                    w * (0.5f + 0.38f * sin(t * fx[i] + ph)),
-                    h * (0.45f + 0.36f * cos(t * fy[i] + ph * 1.7f)),
-                )
-                drawCircle(
-                    Brush.radialGradient(listOf(c.copy(alpha = 0.42f), Color.Transparent), center = center, radius = r),
-                    radius = r, center = center, blendMode = BlendMode.Screen,
-                )
+                val cx = w * (0.5f + 0.36f * sin(TWO_PI * s / DRIFT_X[i] + ph))
+                val cy = h * (0.45f + 0.34f * cos(TWO_PI * s / DRIFT_Y[i] + ph * 1.7f))
+                val breath = sin(TWO_PI * s / BREATH[i] + ph * 2.3f)
+                val radius = r * (1f + 0.2f * breath)
+                val blob = blobs[i]
+                blob.matrix.setScale(radius, radius)
+                blob.matrix.postTranslate(cx, cy)
+                blob.shader.setLocalMatrix(blob.matrix)
+                drawCircle(blob.brush, radius = radius, center = Offset(cx, cy), alpha = 0.75f + 0.25f * breath, blendMode = blend)
             }
         }
         // Voile pour garder le texte lisible, plus dense en bas (barre de navigation).
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.25f),
-                    0.55f to Color.Black.copy(alpha = 0.50f),
-                    1f to Color.Black.copy(alpha = 0.78f),
-                )
+        val veil = when {
+            !g.dark -> Brush.verticalGradient(0f to Color.White.copy(alpha = 0.18f), 0.55f to Color.White.copy(alpha = 0.28f), 1f to Color.White.copy(alpha = 0.45f))
+            deep -> Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.25f), 0.55f to Color.Black.copy(alpha = 0.50f), 1f to Color.Black.copy(alpha = 0.78f))
+            else -> Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.12f), 0.55f to Color.Black.copy(alpha = 0.32f), 1f to Color.Black.copy(alpha = 0.55f))
+        }
+        Box(Modifier.fillMaxSize().background(veil))
+    }
+}
+
+/** Une nappe : dégradé radial de rayon 1, placé et agrandi par sa matrice locale à chaque image. */
+private class CloudBlob(color: Color, alpha: Float) {
+    val shader = android.graphics.RadialGradient(
+        0f, 0f, 1f, intArrayOf(color.copy(alpha = alpha).toArgb(), color.copy(alpha = 0f).toArgb()), null, android.graphics.Shader.TileMode.CLAMP,
+    )
+    val brush = ShaderBrush(shader)
+    val matrix = android.graphics.Matrix()
+}
+
+/** Pochette floue : la pochette en plein écran, très floutée et voilée vers le bas. */
+@Composable
+private fun BlurredArtwork(path: String?, modifier: Modifier) {
+    val settings = LocalThemeSettings.current
+    val g = glassColors()
+    val deep = g.dark && settings.amoled
+    Box(modifier.fillMaxSize().background(g.base)) {
+        if (path != null) {
+            AsyncImage(
+                model = path, contentDescription = null, contentScale = ContentScale.Crop, colorFilter = rememberStyleFilter(settings.style),
+                modifier = Modifier.fillMaxSize().scale(1.3f).then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(36.dp) else Modifier),
             )
-        )
+        }
+        val top = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+        val veil = when {
+            !g.dark -> Brush.verticalGradient(0f to top, 0.5f to Color.White.copy(alpha = 0.45f), 1f to Color.White.copy(alpha = 0.75f))
+            deep -> Brush.verticalGradient(0f to top, 0.5f to Color.Black.copy(alpha = 0.45f), 1f to Color.Black.copy(alpha = 0.85f))
+            else -> Brush.verticalGradient(0f to top, 0.5f to Color.Black.copy(alpha = 0.30f), 1f to Color.Black.copy(alpha = 0.65f))
+        }
+        Box(Modifier.fillMaxSize().background(veil))
     }
 }

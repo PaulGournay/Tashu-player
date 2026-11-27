@@ -180,6 +180,20 @@ private val labelCache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
     override fun sizeOf(key: String, value: Bitmap) = value.byteCount
 }
 
+/** Largeur (px) de l'étiquette d'une cassette du carrousel haute de [heightPx] px (la même en 2D et en 3D). */
+internal fun carouselLabelWidth(heightPx: Float): Int =
+    (heightPx * (LABEL_RIGHT - LABEL_LEFT)).roundToInt().let { ((it + 63) / 64 * 64).coerceIn(128, 1024) }
+
+private fun carouselLabelKey(album: Album, width: Int) = "${album.artworkPath}|${album.title}|${album.artist}|$width"
+
+/** Étiquette d'une cassette du carrousel : depuis le cache, sinon dessinée hors du fil principal puis gardée. */
+internal suspend fun carouselLabel(context: Context, album: Album, width: Int): Bitmap {
+    val key = carouselLabelKey(album, width)
+    return labelCache.get(key) ?: withContext(Dispatchers.Default) {
+        cassetteLabel(context, album.artworkPath, album.title, album.artist, width).also { labelCache.put(key, it) }
+    }
+}
+
 /**
  * Cassette du carrousel, debout (quart de tour vers la gauche : le haut de l'étiquette à gauche, comme dans le walkman).
  * Dessinée dans un carré : hauteur = côté, largeur = côté / [CASSETTE_RATIO].
@@ -188,15 +202,10 @@ private val labelCache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
 internal fun CassetteCard(album: Album, modifier: Modifier) {
     val context = LocalContext.current
     BoxWithConstraints(modifier) {
-        val labelW = with(LocalDensity.current) { (maxHeight.toPx() * (LABEL_RIGHT - LABEL_LEFT)).roundToInt() }
-            .let { ((it + 63) / 64 * 64).coerceIn(128, 1024) }
-        val key = "${album.artworkPath}|${album.title}|${album.artist}|$labelW"
+        val labelW = carouselLabelWidth(with(LocalDensity.current) { maxHeight.toPx() })
+        val key = carouselLabelKey(album, labelW)
         val label by produceState(labelCache.get(key), key) {
-            if (value == null) {
-                value = withContext(Dispatchers.Default) {
-                    cassetteLabel(context, album.artworkPath, album.title, album.artist, labelW).also { labelCache.put(key, it) }
-                }
-            }
+            if (value == null) value = carouselLabel(context, album, labelW)
         }
         val image = label?.asImageBitmap()
         ComposeCanvas(Modifier.matchParentSize()) {

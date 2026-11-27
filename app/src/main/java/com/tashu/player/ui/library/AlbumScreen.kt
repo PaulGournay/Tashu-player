@@ -1,5 +1,7 @@
 package com.tashu.player.ui.library
 
+import com.tashu.player.ui.theme.AppBackground
+import com.tashu.player.ui.theme.glassColors
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -70,12 +72,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.tashu.player.domain.model.Album
-import com.tashu.player.domain.model.ThemeMode
 import com.tashu.player.domain.model.Track
 import com.tashu.player.ui.MainViewModel
-import com.tashu.player.ui.theme.ArtworkCloud
 import com.tashu.player.ui.theme.GlassCircle
-import com.tashu.player.ui.theme.LocalThemeSettings
 import com.tashu.player.ui.theme.TashuTheme
 import com.tashu.player.ui.theme.bubbleClickable
 import com.tashu.player.ui.theme.glassSource
@@ -116,74 +115,72 @@ fun AlbumScreen(vm: MainViewModel, albumId: Long, onBack: () -> Unit, onOpenPlay
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 700 } }
     val titleAlpha by animateFloatAsState(if (collapsed) 1f else 0f, label = "title")
 
-    val theme = LocalThemeSettings.current
-    CompositionLocalProvider(LocalThemeSettings provides theme.copy(mode = ThemeMode.DARK)) {
-        TashuTheme(seed = seed) {
-            CompositionLocalProvider(LocalContentColor provides Color.White) {
-                val status = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-                val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                val bottomSpace = nav + 24.dp + if (playingId != null) 80.dp else 0.dp
+    TashuTheme(seed = seed) {
+        val g = glassColors()
+        CompositionLocalProvider(LocalContentColor provides g.ink) {
+            val status = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            val bottomSpace = nav + 24.dp + if (playingId != null) 80.dp else 0.dp
 
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    Box(Modifier.fillMaxSize().glassSource(backdrop)) {
-                        ArtworkCloud(artwork)
-                        LazyColumn(
-                            state = list,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(top = status + 56.dp, bottom = bottomSpace),
-                        ) {
-                            item(key = "header") {
-                                AlbumHeader(
-                                    album = album, artwork = artwork, tracks = tracks,
-                                    onPlay = { if (sorted.isNotEmpty()) { vm.play(sorted, 0); onOpenPlayer() } },
-                                    onShuffle = { vm.player.playShuffled(sorted); onOpenPlayer() },
-                                    onPlayLast = { vm.player.enqueue(sorted, next = false) },
-                                )
-                            }
-                            item(key = "sort") {
-                                SortRow(
-                                    tracks = tracks, sort = sort, descending = descending,
-                                    onSort = { s -> if (s == sort) descending = !descending else { sort = s; descending = false } },
-                                    onToggleDirection = { descending = !descending },
-                                )
-                            }
-                            itemsIndexed(sorted, key = { _, t -> t.id }) { i, t ->
-                                TrackRow(
-                                    track = t,
-                                    number = if (sort == TrackSort.NUMBER && !descending) t.trackNumber ?: (i + 1) else i + 1,
-                                    albumArtist = album?.artist,
-                                    playing = t.id == playingId,
-                                    onClick = { vm.play(sorted, i); onOpenPlayer() },
-                                    onFavorite = { vm.toggleFavorite(t) },
-                                    onPlayNext = { vm.player.enqueue(listOf(t), next = true) },
-                                    onPlayLast = { vm.player.enqueue(listOf(t), next = false) },
-                                )
-                            }
+            Box(Modifier.fillMaxSize().background(g.base)) {
+                Box(Modifier.fillMaxSize().glassSource(backdrop)) {
+                    AppBackground(artwork)
+                    LazyColumn(
+                        state = list,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = status + 56.dp, bottom = bottomSpace),
+                    ) {
+                        item(key = "header") {
+                            AlbumHeader(
+                                album = album, artwork = artwork, tracks = tracks,
+                                onPlay = { if (sorted.isNotEmpty()) { vm.play(sorted, 0); onOpenPlayer() } },
+                                onShuffle = { vm.player.playShuffled(sorted); onOpenPlayer() },
+                                onPlayLast = { vm.player.enqueue(sorted, next = false) },
+                            )
+                        }
+                        item(key = "sort") {
+                            SortRow(
+                                tracks = tracks, sort = sort, descending = descending,
+                                onSort = { s -> if (s == sort) descending = !descending else { sort = s; descending = false } },
+                                onToggleDirection = { descending = !descending },
+                            )
+                        }
+                        itemsIndexed(sorted, key = { _, t -> t.id }) { i, t ->
+                            TrackRow(
+                                track = t,
+                                number = if (sort == TrackSort.NUMBER && !descending) t.trackNumber ?: (i + 1) else i + 1,
+                                albumArtist = album?.artist,
+                                playing = t.id == playingId,
+                                onClick = { vm.play(sorted, i); onOpenPlayer() },
+                                onFavorite = { vm.toggleFavorite(t) },
+                                onPlayNext = { vm.player.enqueue(listOf(t), next = true) },
+                                onPlayLast = { vm.player.enqueue(listOf(t), next = false) },
+                            )
                         }
                     }
+                }
 
-                    // Bord de défilement flouté, puis barre : retour en verre + titre compact.
-                    Box(Modifier.fillMaxWidth().height(status + 84.dp).scrollEdgeBlur(backdrop))
-                    Row(
-                        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        GlassCircle(backdrop, Icons.AutoMirrored.Rounded.ArrowBack, "Retour", onClick = onBack)
-                        Text(
-                            album?.title.orEmpty(),
-                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp).graphicsLayer { alpha = titleAlpha },
-                        )
-                        Spacer(Modifier.width(40.dp))
-                    }
+                // Bord de défilement flouté, puis barre : retour en verre + titre compact.
+                Box(Modifier.fillMaxWidth().height(status + 84.dp).scrollEdgeBlur(backdrop))
+                Row(
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassCircle(backdrop, Icons.AutoMirrored.Rounded.ArrowBack, "Retour", onClick = onBack)
+                    Text(
+                        album?.title.orEmpty(),
+                        fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = g.ink,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f).padding(horizontal = 12.dp).graphicsLayer { alpha = titleAlpha },
+                    )
+                    Spacer(Modifier.width(40.dp))
+                }
 
-                    AnimatedVisibility(
-                        playingId != null, enter = fadeIn(), exit = fadeOut(),
-                        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
-                    ) {
-                        GlassMiniPlayer(vm, backdrop, onOpenPlayer)
-                    }
+                AnimatedVisibility(
+                    playingId != null, enter = fadeIn(), exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    GlassMiniPlayer(vm, backdrop, onOpenPlayer)
                 }
             }
         }
@@ -199,6 +196,7 @@ private fun AlbumHeader(
     onShuffle: () -> Unit,
     onPlayLast: () -> Unit,
 ) {
+    val g = glassColors()
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         val shape = RoundedCornerShape(14.dp)
         AsyncImage(
@@ -208,11 +206,11 @@ private fun AlbumHeader(
                 .size(248.dp)
                 .shadow(30.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(shape)
-                .background(Color.White.copy(alpha = 0.06f)),
+                .background(g.fill(0.06f)),
         )
         Text(
             album?.title.orEmpty(),
-            fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, color = Color.White,
+            fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, color = g.ink,
             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 22.dp),
         )
@@ -223,7 +221,7 @@ private fun AlbumHeader(
         )
         Text(
             listOfNotNull(album?.year?.toString(), titlesLabel(tracks), totalDuration(tracks).takeIf { tracks.isNotEmpty() }).joinToString(" · "),
-            fontSize = 13.sp, color = Color.White.copy(alpha = 0.55f), modifier = Modifier.padding(top = 6.dp),
+            fontSize = 13.sp, color = g.ink.copy(alpha = 0.55f), modifier = Modifier.padding(top = 6.dp),
         )
         Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             HeaderButton(Icons.Rounded.PlayArrow, "Lecture", primary = true, enabled = tracks.isNotEmpty(), modifier = Modifier.weight(1f), onClick = onPlay)
@@ -237,8 +235,8 @@ private fun AlbumHeader(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
-            Text("Jouer en dernier", fontSize = 13.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(start = 6.dp))
+            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = g.ink.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+            Text("Jouer en dernier", fontSize = 13.sp, color = g.ink.copy(alpha = 0.7f), modifier = Modifier.padding(start = 6.dp))
         }
     }
 }
@@ -246,17 +244,18 @@ private fun AlbumHeader(
 /** Lecture = pastille blanche pleine ; Aléatoire = pastille de verre. */
 @Composable
 private fun HeaderButton(icon: ImageVector, label: String, primary: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val g = glassColors()
     Row(
         modifier
             .bubbleClickable(pressedScale = 0.94f) { if (enabled) onClick() }
             .height(50.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(if (primary) Color.White else Color.White.copy(alpha = 0.12f))
+            .background(if (primary) g.ink else g.ink.copy(alpha = 0.12f))
             .graphicsLayer { alpha = if (enabled) 1f else 0.4f },
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val tint = if (primary) Color.Black else Color.White
+        val tint = if (primary) g.onInk else g.ink
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
         Text(label, color = tint, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp))
     }
@@ -264,29 +263,30 @@ private fun HeaderButton(icon: ImageVector, label: String, primary: Boolean, ena
 
 @Composable
 private fun SortRow(tracks: List<Track>, sort: TrackSort, descending: Boolean, onSort: (TrackSort) -> Unit, onToggleDirection: () -> Unit) {
+    val g = glassColors()
     Row(
         Modifier.fillMaxWidth().padding(start = 24.dp, end = 16.dp, top = 22.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(titlesLabel(tracks), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.55f))
+        Text(titlesLabel(tracks), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = g.ink.copy(alpha = 0.55f))
         Spacer(Modifier.weight(1f))
         Box {
             var open by remember { mutableStateOf(false) }
             Text(
-                sort.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1,
+                sort.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = g.ink, maxLines = 1,
                 modifier = Modifier
                     .bubbleClickable(pressedScale = 0.92f) { open = true }
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f))
+                    .background(g.fill(0.10f))
                     .padding(horizontal = 14.dp, vertical = 7.dp),
             )
             DropdownMenu(
                 expanded = open, onDismissRequest = { open = false },
-                containerColor = Color(0xFF1C1C1E), shape = RoundedCornerShape(16.dp),
+                containerColor = g.menu, shape = RoundedCornerShape(16.dp),
             ) {
                 TrackSort.entries.forEach { s ->
                     DropdownMenuItem(
-                        text = { Text(s.label, color = if (s == sort) MaterialTheme.colorScheme.primary else Color.White) },
+                        text = { Text(s.label, color = if (s == sort) MaterialTheme.colorScheme.primary else g.ink) },
                         onClick = { onSort(s); open = false },
                     )
                 }
@@ -299,7 +299,7 @@ private fun SortRow(tracks: List<Track>, sort: TrackSort, descending: Boolean, o
             Icon(
                 if (descending) Icons.Rounded.ArrowDownward else Icons.Rounded.ArrowUpward,
                 contentDescription = if (descending) "Ordre décroissant, inverser" else "Ordre croissant, inverser",
-                tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(18.dp),
+                tint = g.ink.copy(alpha = 0.8f), modifier = Modifier.size(18.dp),
             )
         }
     }
@@ -317,6 +317,7 @@ private fun TrackRow(
     onPlayNext: () -> Unit,
     onPlayLast: () -> Unit,
 ) {
+    val g = glassColors()
     val accent = MaterialTheme.colorScheme.primary
     Column {
         Row(
@@ -328,50 +329,50 @@ private fun TrackRow(
         ) {
             Box(Modifier.width(28.dp), contentAlignment = Alignment.CenterStart) {
                 if (playing) Icon(Icons.Rounded.Equalizer, contentDescription = "En lecture", tint = accent, modifier = Modifier.size(18.dp))
-                else Text(number.toString(), fontSize = 15.sp, color = Color.White.copy(alpha = 0.45f))
+                else Text(number.toString(), fontSize = 15.sp, color = g.ink.copy(alpha = 0.45f))
             }
             Column(Modifier.weight(1f).padding(start = 6.dp, end = 8.dp)) {
                 Text(
                     track.title, fontSize = 16.sp, fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (playing) accent else Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = if (playing) accent else g.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 // L'artiste n'est rappelé que s'il diffère de celui de l'album (featurings, compilations).
                 if (!track.artist.equals(albumArtist, ignoreCase = true)) {
-                    Text(track.artist, fontSize = 13.sp, color = Color.White.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(track.artist, fontSize = 13.sp, color = g.ink.copy(alpha = 0.55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Text(formatDuration(track.durationMs), fontSize = 13.sp, color = Color.White.copy(alpha = 0.45f))
+            Text(formatDuration(track.durationMs), fontSize = 13.sp, color = g.ink.copy(alpha = 0.45f))
             val fav = track.rating >= 5
             Box(Modifier.size(40.dp).bubbleClickable(pressedScale = 0.8f, onClick = onFavorite), contentAlignment = Alignment.Center) {
                 Icon(
                     if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                     contentDescription = if (fav) "Retirer des favoris" else "Ajouter aux favoris",
-                    tint = if (fav) accent else Color.White.copy(alpha = 0.35f), modifier = Modifier.size(20.dp),
+                    tint = if (fav) accent else g.ink.copy(alpha = 0.35f), modifier = Modifier.size(20.dp),
                 )
             }
             Box {
                 var open by remember { mutableStateOf(false) }
                 Box(Modifier.size(36.dp).bubbleClickable(pressedScale = 0.8f) { open = true }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.MoreHoriz, contentDescription = "Plus d'options pour ${track.title}", tint = Color.White.copy(alpha = 0.6f))
+                    Icon(Icons.Rounded.MoreHoriz, contentDescription = "Plus d'options pour ${track.title}", tint = g.ink.copy(alpha = 0.6f))
                 }
                 DropdownMenu(
                     expanded = open, onDismissRequest = { open = false },
-                    containerColor = Color(0xFF1C1C1E), shape = RoundedCornerShape(16.dp),
+                    containerColor = g.menu, shape = RoundedCornerShape(16.dp),
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Lire ensuite", color = Color.White) },
-                        leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null, tint = Color.White) },
+                        text = { Text("Lire ensuite", color = g.ink) },
+                        leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null, tint = g.ink) },
                         onClick = { onPlayNext(); open = false },
                     )
                     DropdownMenuItem(
-                        text = { Text("Jouer en dernier", color = Color.White) },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = Color.White) },
+                        text = { Text("Jouer en dernier", color = g.ink) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = g.ink) },
                         onClick = { onPlayLast(); open = false },
                     )
                 }
             }
         }
-        Box(Modifier.padding(start = 58.dp, end = 16.dp).fillMaxWidth().height(0.5.dp).background(Color.White.copy(alpha = 0.10f)))
+        Box(Modifier.padding(start = 58.dp, end = 16.dp).fillMaxWidth().height(0.5.dp).background(g.line(0.10f)))
     }
 }
 
