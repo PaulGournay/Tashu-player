@@ -21,6 +21,7 @@ import com.tashu.player.domain.model.ThemeSettings
 import com.tashu.player.domain.model.Track
 import com.tashu.player.domain.repository.LibraryRepository
 import com.tashu.player.domain.repository.SettingsRepository
+import com.tashu.player.domain.repository.StatsRepository
 import com.tashu.player.drive.api.DriveApi
 import com.tashu.player.drive.api.DriveFile
 import com.tashu.player.drive.api.DriveParents
@@ -49,6 +50,7 @@ class MainViewModel @Inject constructor(
     val player: PlayerConnection,
     private val library: LibraryRepository,
     private val settings: SettingsRepository,
+    stats: StatsRepository,
     scanner: DriveMusicScanner,
 ) : ViewModel() {
     val authState = auth.state
@@ -85,6 +87,8 @@ class MainViewModel @Inject constructor(
     }
     val tracks: StateFlow<List<Track>> = library.tracks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val artists: StateFlow<List<Artist>> = library.artists().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Accueil, « Pas écouté depuis longtemps ». */
+    val rediscover: StateFlow<List<Album>> = stats.rediscover(15).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     // ---- Recherche (morceaux, albums, artistes ; sans accents ni majuscules) ----
     val searchQuery = MutableStateFlow("")

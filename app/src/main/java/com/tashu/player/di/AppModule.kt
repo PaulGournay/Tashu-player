@@ -4,13 +4,16 @@ import android.content.Context
 import androidx.room.Room
 import com.tashu.player.data.db.MIGRATION_1_2
 import com.tashu.player.data.db.MIGRATION_2_3
+import com.tashu.player.data.db.MIGRATION_3_4
 import com.tashu.player.data.db.MusicDatabase
 import com.tashu.player.data.lyrics.LyricsRepositoryImpl
 import com.tashu.player.data.repo.LibraryRepositoryImpl
 import com.tashu.player.data.repo.SettingsRepositoryImpl
+import com.tashu.player.data.repo.StatsRepositoryImpl
 import com.tashu.player.domain.repository.LibraryRepository
 import com.tashu.player.domain.repository.LyricsRepository
 import com.tashu.player.domain.repository.SettingsRepository
+import com.tashu.player.domain.repository.StatsRepository
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -37,7 +40,7 @@ object AppModule {
 
     @Provides @Singleton
     fun database(@ApplicationContext context: Context): MusicDatabase =
-        Room.databaseBuilder(context, MusicDatabase::class.java, "tashu.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        Room.databaseBuilder(context, MusicDatabase::class.java, "tashu.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
 }
 
 @Module
@@ -46,4 +49,5 @@ abstract class BindingsModule {
     @Binds abstract fun library(impl: LibraryRepositoryImpl): LibraryRepository
     @Binds abstract fun settings(impl: SettingsRepositoryImpl): SettingsRepository
     @Binds abstract fun lyrics(impl: LyricsRepositoryImpl): LyricsRepository
+    @Binds abstract fun stats(impl: StatsRepositoryImpl): StatsRepository
 }

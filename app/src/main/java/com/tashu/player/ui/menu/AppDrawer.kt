@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Palette
@@ -62,6 +63,7 @@ fun AppDrawer(
     scan: ScanProgress,
     onRescan: () -> Unit,
     onPersonalize: () -> Unit,
+    onStats: () -> Unit,
 ) {
     ModalDrawerSheet(
         windowInsets = WindowInsets(0),
@@ -86,6 +88,7 @@ fun AppDrawer(
             DrawerItem(Icons.Rounded.LibraryMusic, "Bibliothèque", selected = true, onClick = onLibrary)
             DrawerItem(Icons.Rounded.FolderOpen, "Dossiers Drive", selected = false, onClick = onManageFolders)
             ScanCard(scan, onRescan)
+            DrawerItem(Icons.Rounded.BarChart, "Statistiques", selected = false, onClick = onStats)
             DrawerItem(Icons.Rounded.Palette, "Personnalisation", selected = false, onClick = onPersonalize)
             Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(1.dp).background(g.line(0.10f)))
             Credits()

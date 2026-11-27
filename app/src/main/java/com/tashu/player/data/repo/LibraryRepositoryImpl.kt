@@ -50,7 +50,7 @@ class LibraryRepositoryImpl @Inject constructor(
 
 private fun List<TrackEntity>.toDomain() = map { it.toDomain() }
 
-private fun AlbumView.toDomain() = Album(id, title, artistName, year, artworkPath, trackCount, dateAdded, playCount, lastPlayedAt, durationMs)
+internal fun AlbumView.toDomain() = Album(id, title, artistName, year, artworkPath, trackCount, dateAdded, playCount, lastPlayedAt, durationMs)
 
 fun TrackEntity.toDomain() = Track(
     id = id, title = title, artist = artist, albumArtist = albumArtist, album = album, albumId = albumId ?: -1,

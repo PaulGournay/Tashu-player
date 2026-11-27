@@ -122,7 +122,7 @@ fun PersonalizationScreen(vm: MainViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun Section(backdrop: GlassBackdrop, title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun Section(backdrop: GlassBackdrop, title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -280,7 +280,7 @@ private fun DeckSettings(theme: ThemeSettings, onChange: ((ThemeSettings) -> The
 
 /** Pastille de choix en verre, partagée par toutes les options. */
 @Composable
-private fun GlassOption(label: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun GlassOption(label: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     val g = glassColors()
     Text(
         label,

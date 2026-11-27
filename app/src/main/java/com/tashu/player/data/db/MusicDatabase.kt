@@ -9,10 +9,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         TrackEntity::class, AlbumEntity::class, ArtistEntity::class, GenreEntity::class,
         ComposerEntity::class, FolderEntity::class, SmartPlaylistEntity::class, QueueEntity::class,
-        LyricsEntity::class,
+        LyricsEntity::class, PlayEventEntity::class,
     ],
     views = [AlbumView::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class MusicDatabase : RoomDatabase() {
@@ -22,6 +22,7 @@ abstract class MusicDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun queueDao(): QueueDao
     abstract fun lyricsDao(): LyricsDao
+    abstract fun playHistoryDao(): PlayHistoryDao
 }
 
 /** Albums par dossier Drive (titre/artiste calculés par album_view) et table des paroles. SQL figé sur schemas/2.json. */
@@ -59,5 +60,17 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("DROP VIEW IF EXISTS `album_view`")
         db.execSQL("CREATE VIEW `album_view` AS $ALBUM_VIEW_SQL")
+    }
+}
+
+/** Historique d'écoute (statistiques, Tashu Wrapped, Redécouverte). SQL figé sur schemas/4.json. */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `play_history` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `trackId` TEXT NOT NULL, " +
+                "`albumId` INTEGER, `artist` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `listenedMs` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_history_startedAt` ON `play_history` (`startedAt`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_history_albumId` ON `play_history` (`albumId`)")
     }
 }

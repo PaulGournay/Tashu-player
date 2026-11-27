@@ -86,6 +86,7 @@ class MusicPlaybackService : MediaLibraryService() {
     private lateinit var crossfade: CrossfadeController
     private lateinit var queues: QueueManager
     private lateinit var usbRouter: UsbDacRouter
+    private lateinit var listens: ListenTracker
     private val peq = ParametricEqAudioProcessor()
     private val audioInfo = Bundle()
 
@@ -132,6 +133,7 @@ class MusicPlaybackService : MediaLibraryService() {
         crossfade = CrossfadeController(player, scope).apply { start() }
         queues = QueueManager(player, db.queueDao(), library, json)
         usbRouter = UsbDacRouter(this, player) { publishOutputDevice(it) }.apply { start() }
+        listens = ListenTracker(player, db.playHistoryDao(), scope).apply { start() }
 
         player.addListener(playerListener)
         player.addAnalyticsListener(analyticsListener)
@@ -165,6 +167,7 @@ class MusicPlaybackService : MediaLibraryService() {
     override fun onDestroy() {
         // Sauvegarde synchrone : le scope est annulé juste après.
         runBlocking { withTimeoutOrNull(1_000) { queues.saveCurrent() } }
+        listens.stop()
         crossfade.stop()
         usbRouter.stop()
         effects.release()

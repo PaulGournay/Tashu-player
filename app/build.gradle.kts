@@ -16,8 +16,8 @@ android {
         // 28 = DynamicsProcessing (EQ graphique + gain ReplayGain).
         minSdk = 28
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.4"
+        versionCode = 7
+        versionName = "0.2.5"
         // Téléphones récents uniquement (ARM 64 bits) : APK nettement plus léger.
         ndk { abiFilters += listOf("arm64-v8a") }
 

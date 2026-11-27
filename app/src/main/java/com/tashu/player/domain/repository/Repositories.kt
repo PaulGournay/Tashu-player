@@ -6,11 +6,17 @@ import com.tashu.player.domain.model.AlbumSortOrder
 import com.tashu.player.domain.model.Artist
 import com.tashu.player.domain.model.AudioSettings
 import com.tashu.player.domain.model.DriveFolder
+import com.tashu.player.domain.model.ListeningStats
+import com.tashu.player.domain.model.MonthRecap
+import com.tashu.player.domain.model.StatsPeriod
+import com.tashu.player.domain.model.WeekListening
+import com.tashu.player.domain.model.WrappedMonth
 import com.tashu.player.domain.model.NowPlayingStyle
 import com.tashu.player.domain.model.SmartPlaylistDefinition
 import com.tashu.player.domain.model.ThemeSettings
 import com.tashu.player.domain.model.Track
 import kotlinx.coroutines.flow.Flow
+import java.time.YearMonth
 
 interface LibraryRepository {
     fun albums(): Flow<List<Album>>
@@ -27,6 +33,18 @@ interface LibraryRepository {
     suspend fun tracks(ids: List<String>): List<Track>
     suspend fun setRating(trackId: String, rating: Int)
     suspend fun markPlayed(trackId: String)
+}
+
+/** Historique d'écoute : statistiques, Tashu Wrapped et Redécouverte. */
+interface StatsRepository {
+    fun stats(period: StatsPeriod, limit: Int): Flow<ListeningStats>
+    /** Les [weeks] dernières semaines (lundi → dimanche), la semaine en cours comprise, de la plus ancienne à la plus récente. */
+    fun weeklyListening(weeks: Int): Flow<List<WeekListening>>
+    /** Mois présents dans l'historique, du plus ancien au plus récent. */
+    fun wrappedMonths(): Flow<List<WrappedMonth>>
+    fun monthRecap(month: YearMonth): Flow<MonthRecap>
+    /** Albums aimés puis délaissés : écoutés avant, plus depuis longtemps (vide si l'historique est trop court). */
+    fun rediscover(limit: Int): Flow<List<Album>>
 }
 
 interface SettingsRepository {

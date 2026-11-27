@@ -44,6 +44,9 @@ import com.tashu.player.ui.menu.PersonalizationScreen
 import com.tashu.player.ui.nowplaying.NowPlayingScreen
 import com.tashu.player.ui.onboarding.FolderPickerScreen
 import com.tashu.player.ui.onboarding.SignInScreen
+import com.tashu.player.ui.stats.StatsScreen
+import com.tashu.player.ui.stats.WrappedScreen
+import java.time.YearMonth
 
 object Routes {
     const val SIGN_IN = "signin"
@@ -52,7 +55,10 @@ object Routes {
     const val ALBUM = "album/{id}"
     const val NOW_PLAYING = "now"
     const val PERSONALIZATION = "personalization"
+    const val STATS = "stats"
+    const val WRAPPED = "wrapped/{month}"
     fun album(id: Long) = "album/$id"
+    fun wrapped(month: YearMonth) = "wrapped/$month"
 }
 
 /** Point d'où le lecteur jaillit et où il retourne : le centre du mini-lecteur, en bas de l'écran. */
@@ -116,9 +122,16 @@ fun TashuNavHost(nav: NavHostController, signedIn: Boolean) {
                 onOpenPlayer = { nav.navigate(Routes.NOW_PLAYING) },
                 onManageFolders = { nav.navigate(Routes.PICK_FOLDERS) },
                 onPersonalize = { nav.navigate(Routes.PERSONALIZATION) },
+                onStats = { nav.navigate(Routes.STATS) },
             )
         }
         composable(Routes.PERSONALIZATION) { PersonalizationScreen(vm, onBack = { nav.popBackStack() }) }
+        composable(Routes.STATS) {
+            StatsScreen(vm, onBack = { nav.popBackStack() }, onOpenAlbum = { nav.navigate(Routes.album(it)) }, onWrapped = { nav.navigate(Routes.wrapped(it)) })
+        }
+        composable(Routes.WRAPPED, arguments = listOf(navArgument("month") { type = NavType.StringType })) {
+            WrappedScreen(vm, onClose = { nav.popBackStack() })
+        }
         composable(Routes.ALBUM, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
             AlbumScreen(vm, entry.arguments!!.getLong("id"), onBack = { nav.popBackStack() }, onOpenPlayer = { nav.navigate(Routes.NOW_PLAYING) })
         }

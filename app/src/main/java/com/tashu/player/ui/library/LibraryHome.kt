@@ -144,6 +144,7 @@ fun LibraryScreen(
     onOpenPlayer: () -> Unit,
     onManageFolders: () -> Unit,
     onPersonalize: () -> Unit,
+    onStats: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     var section by rememberSaveable { mutableStateOf(LibrarySection.ALBUMS) }
@@ -171,6 +172,7 @@ fun LibraryScreen(
                     scan = scan,
                     onRescan = { vm.rescan() },
                     onPersonalize = { scope.launch { drawer.close() }; onPersonalize() },
+                    onStats = { scope.launch { drawer.close() }; onStats() },
                 )
             },
         ) {
@@ -403,6 +405,7 @@ private fun HomeContent(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: 
         albums.sortedWith(compareByDescending<Album> { it.lastPlayedAt ?: 0L }.thenByDescending { it.dateAdded }).take(8)
     }
     val added = remember(albums) { albums.sortedByDescending { it.dateAdded }.take(15) }
+    val forgotten by vm.rediscover.collectAsStateWithLifecycle()
     val coverByArtist by vm.artistCovers.collectAsStateWithLifecycle()
     val topArtists = remember(artists) { artists.sortedByDescending { it.trackCount }.take(15) }
 
@@ -421,6 +424,14 @@ private fun HomeContent(vm: MainViewModel, padding: PaddingValues, onOpenAlbum: 
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(added, key = { it.id }) { a -> AlbumCard(a, 148.dp) { onOpenAlbum(a.id) } }
+            }
+        }
+        if (forgotten.isNotEmpty()) {
+            item { SectionTitle("Pas écouté depuis longtemps") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(forgotten, key = { it.id }) { a -> AlbumCard(a, 148.dp) { onOpenAlbum(a.id) } }
+                }
             }
         }
         item { SectionTitle("Vos artistes") }
