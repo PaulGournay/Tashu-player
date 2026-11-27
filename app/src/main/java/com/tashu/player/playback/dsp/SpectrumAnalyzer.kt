@@ -121,28 +121,33 @@ class SpectrumAnalyzer @Inject constructor() {
     }
 }
 
-/** Processeur transparent : recopie l'audio tel quel et en donne une copie mono à l'analyseur. */
-class SpectrumTapAudioProcessor(private val analyzer: SpectrumAnalyzer) : BaseAudioProcessor() {
+/** Processeur transparent : recopie l'audio tel quel et en donne une copie mono à l'analyseur et à la pulsation du nuage. */
+class SpectrumTapAudioProcessor(private val analyzer: SpectrumAnalyzer, private val pulse: MusicPulse) : BaseAudioProcessor() {
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT && inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT) {
             throw UnhandledAudioFormatException(inputAudioFormat)
         }
         analyzer.configure(inputAudioFormat.sampleRate)
+        pulse.configure(inputAudioFormat.sampleRate)
         return inputAudioFormat
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
-        if (analyzer.active) {
+        val spectrum = analyzer.active
+        val beat = pulse.active
+        if (spectrum || beat) {
             val view = inputBuffer.duplicate().order(inputBuffer.order())
             val channels = inputAudioFormat.channelCount
             val pcm16 = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT
             while (view.remaining() >= channels * (if (pcm16) 2 else 4)) {
                 var sum = 0f
                 repeat(channels) { sum += if (pcm16) view.short / 32768f else view.float }
-                analyzer.push(sum / channels)
+                val mono = sum / channels
+                if (spectrum) analyzer.push(mono)
+                if (beat) pulse.push(mono)
             }
         }
         replaceOutputBuffer(remaining).put(inputBuffer).flip()

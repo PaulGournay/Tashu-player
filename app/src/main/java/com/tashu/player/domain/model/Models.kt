@@ -194,4 +194,10 @@ data class ThemeSettings(
     val deckMode: DeckMode = DeckMode.CD,
     /** Fond de la bibliothèque, des albums et du lecteur (ignoré en style minimaliste). */
     val background: BackgroundStyle = BackgroundStyle.CLOUD,
+    /** Nuage vivant en mouvement ; sinon image fixe, sans animation. */
+    val cloudAnimated: Boolean = true,
+    /** Vitesse du nuage, 1 = vitesse d'origine. */
+    val cloudSpeed: Float = 1f,
+    /** Le nuage pulse sur la musique jouée par l'app. */
+    val cloudReactsToMusic: Boolean = false,
 )

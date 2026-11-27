@@ -40,6 +40,7 @@ import androidx.navigation.navArgument
 import com.tashu.player.ui.MainViewModel
 import com.tashu.player.ui.library.AlbumScreen
 import com.tashu.player.ui.library.LibraryScreen
+import com.tashu.player.ui.menu.PersonalizationScreen
 import com.tashu.player.ui.nowplaying.NowPlayingScreen
 import com.tashu.player.ui.onboarding.FolderPickerScreen
 import com.tashu.player.ui.onboarding.SignInScreen
@@ -50,6 +51,7 @@ object Routes {
     const val LIBRARY = "library"
     const val ALBUM = "album/{id}"
     const val NOW_PLAYING = "now"
+    const val PERSONALIZATION = "personalization"
     fun album(id: Long) = "album/$id"
 }
 
@@ -113,8 +115,10 @@ fun TashuNavHost(nav: NavHostController, signedIn: Boolean) {
                 onOpenAlbum = { nav.navigate(Routes.album(it)) },
                 onOpenPlayer = { nav.navigate(Routes.NOW_PLAYING) },
                 onManageFolders = { nav.navigate(Routes.PICK_FOLDERS) },
+                onPersonalize = { nav.navigate(Routes.PERSONALIZATION) },
             )
         }
+        composable(Routes.PERSONALIZATION) { PersonalizationScreen(vm, onBack = { nav.popBackStack() }) }
         composable(Routes.ALBUM, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
             AlbumScreen(vm, entry.arguments!!.getLong("id"), onBack = { nav.popBackStack() }, onOpenPlayer = { nav.navigate(Routes.NOW_PLAYING) })
         }

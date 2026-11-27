@@ -10,6 +10,16 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.draw.scale
 import com.tashu.player.domain.model.BackgroundStyle
+import com.tashu.player.playback.dsp.MusicPulse
+import android.os.SystemClock
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.drawBehind
+import kotlin.math.exp
 import com.tashu.player.domain.model.ThemeColorSource
 import com.tashu.player.domain.model.ThemeStyle
 import com.tashu.player.domain.model.UiStyle
@@ -33,12 +43,8 @@ import androidx.compose.ui.unit.Dp
 import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -357,17 +363,23 @@ private fun rememberStyleFilter(style: ThemeStyle): ColorFilter? = remember(styl
     ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(saturation) })
 }
 
-/** Périodes (s) de dérive horizontale, verticale et de respiration de chaque nappe. */
-private val DRIFT_X = floatArrayOf(20f, 15f, 12f, 20f, 15f)
-private val DRIFT_Y = floatArrayOf(15f, 20f, 20f, 12f, 12f)
-private val BREATH = floatArrayOf(12f, 10f, 15f, 10f, 20f)
+/** Pulsation de la musique jouée par l'app, fournie par [com.tashu.player.ui.MainActivity]. */
+val LocalMusicPulse = staticCompositionLocalOf<MusicPulse> { error("MusicPulse non fourni") }
+
+/** Périodes (s) de dérive horizontale, verticale, de grande boucle et de respiration de chaque nappe. */
+private val DRIFT_X = floatArrayOf(10f, 15f, 12f, 20f, 8f)
+private val DRIFT_Y = floatArrayOf(15f, 12f, 20f, 10f, 24f)
+private val WANDER = floatArrayOf(30f, 40f, 24f, 60f, 30f)
+private val BREATH = floatArrayOf(6f, 8f, 10f, 12f, 8f)
 // Multiple de toutes les périodes ci-dessus : la boucle repart sans à-coup.
 private const val CLOUD_LOOP_S = 120
 private const val TWO_PI = (2 * PI).toFloat()
 
 /**
  * Nuage vivant : cinq nappes de couleur (pochette, fond d'écran ou couleur fixe, passées au style des couleurs)
- * dérivent et respirent sur des cycles de 10 à 20 s ; avec la pochette, elle-même très floutée tourne lentement dessous.
+ * traversent l'écran et respirent sur des cycles de 6 à 24 s, plus une grande boucle de 24 à 60 s ; avec la pochette, elle-même très floutée tourne lentement dessous.
+ * Vitesse réglable ; animation coupée = image fixe, aucune boucle d'images. Option : les nappes gonflent,
+ * accélèrent et s'éclairent sur la musique ([MusicPulse]).
  * Rien n'est alloué image par image : chaque nappe garde son dégradé, seule sa matrice change.
  */
 @Composable
@@ -379,19 +391,45 @@ private fun ArtworkCloud(artworkPath: String?, modifier: Modifier) {
     val colors = List(target.size) { i ->
         animateColorAsState(if (g.dark) target[i] else lerp(target[i], Color.White, 0.25f), tween(1600), label = "cloud$i").value
     }
-    val blobAlpha = when { !g.dark -> 0.7f; deep -> 0.42f; else -> 0.5f }
+    val blobAlpha = when { !g.dark -> 0.8f; deep -> 0.65f; else -> 0.8f }
     val blobs = remember(colors, blobAlpha) { colors.map { CloudBlob(it, blobAlpha) } }
     val blend = if (g.dark) BlendMode.Screen else BlendMode.SrcOver
-    val s by rememberInfiniteTransition(label = "cloud").animateFloat(
-        0f, CLOUD_LOOP_S.toFloat(), infiniteRepeatable(tween(CLOUD_LOOP_S * 1000, easing = LinearEasing)), label = "s",
-    )
+    val pulse = LocalMusicPulse.current
+    val reacts = settings.cloudAnimated && settings.cloudReactsToMusic
+    val speed by rememberUpdatedState(settings.cloudSpeed)
+    val listening by rememberUpdatedState(reacts)
+    // Phase intégrée image par image : changer la vitesse change le rythme, jamais la position des nappes.
+    var s by remember { mutableFloatStateOf(0f) }
+    var beat by remember { mutableFloatStateOf(0f) }
+    if (reacts) {
+        DisposableEffect(pulse) {
+            pulse.acquire()
+            onDispose { pulse.release() }
+        }
+    }
+    LaunchedEffect(settings.cloudAnimated) {
+        if (!settings.cloudAnimated) {
+            beat = 0f
+            return@LaunchedEffect
+        }
+        var last = withFrameNanos { it }
+        while (true) {
+            withFrameNanos { t ->
+                val dt = ((t - last) / 1e9f).coerceAtMost(0.1f)
+                last = t
+                val target = if (listening) pulse.level(SystemClock.uptimeMillis()) else 0f
+                beat += (target - beat) * (1f - exp(-dt / if (target > beat) 0.04f else 0.3f))
+                s = (s + dt * speed * (1f + 0.8f * beat)) % CLOUD_LOOP_S
+            }
+        }
+    }
     val ground = when { !g.dark -> g.base; deep -> Color.Black; else -> Color(0xFF111116) }
     BoxWithConstraints(modifier.fillMaxSize().background(ground), contentAlignment = Alignment.Center) {
         // Carré plus grand que la diagonale de l'écran : en tournant, il couvre toujours tout (pas de coin visible).
         val side = sqrt(maxWidth.value * maxWidth.value + maxHeight.value * maxHeight.value).dp * 1.15f
         if (settings.colorSource == ThemeColorSource.ARTWORK && artworkPath != null && Build.VERSION.SDK_INT >= 31) {
             val filter = rememberStyleFilter(settings.style)
-            val artAlpha = if (g.dark) 0.5f else 0.45f
+            val artAlpha = if (g.dark) 0.4f else 0.35f
             Crossfade(
                 artworkPath, animationSpec = tween(1200), label = "cloudArt",
                 modifier = Modifier.wrapContentSize(unbounded = true).requiredSize(side),
@@ -411,34 +449,38 @@ private fun ArtworkCloud(artworkPath: String?, modifier: Modifier) {
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            val r = maxOf(w, h) * 0.45f
+            val r = maxOf(w, h) * 0.3f
             for (i in blobs.indices) {
                 val ph = i * 1.3f
-                val cx = w * (0.5f + 0.36f * sin(TWO_PI * s / DRIFT_X[i] + ph))
-                val cy = h * (0.45f + 0.34f * cos(TWO_PI * s / DRIFT_Y[i] + ph * 1.7f))
+                val wander = TWO_PI * s / WANDER[i] + ph * 0.7f
+                val cx = w * (0.5f + 0.42f * sin(TWO_PI * s / DRIFT_X[i] + ph) + 0.18f * cos(wander))
+                val cy = h * (0.45f + 0.34f * cos(TWO_PI * s / DRIFT_Y[i] + ph * 1.7f) + 0.14f * sin(wander))
                 val breath = sin(TWO_PI * s / BREATH[i] + ph * 2.3f)
-                val radius = r * (1f + 0.2f * breath)
+                val radius = r * (1f + 0.25f * breath) * (1f + 0.2f * beat)
                 val blob = blobs[i]
                 blob.matrix.setScale(radius, radius)
                 blob.matrix.postTranslate(cx, cy)
                 blob.shader.setLocalMatrix(blob.matrix)
-                drawCircle(blob.brush, radius = radius, center = Offset(cx, cy), alpha = 0.75f + 0.25f * breath, blendMode = blend)
+                drawCircle(blob.brush, radius = radius, center = Offset(cx, cy), alpha = minOf(1f, 0.75f + 0.25f * breath + 0.25f * beat), blendMode = blend)
             }
         }
         // Voile pour garder le texte lisible, plus dense en bas (barre de navigation).
         val veil = when {
             !g.dark -> Brush.verticalGradient(0f to Color.White.copy(alpha = 0.18f), 0.55f to Color.White.copy(alpha = 0.28f), 1f to Color.White.copy(alpha = 0.45f))
-            deep -> Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.25f), 0.55f to Color.Black.copy(alpha = 0.50f), 1f to Color.Black.copy(alpha = 0.78f))
+            deep -> Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.22f), 0.55f to Color.Black.copy(alpha = 0.42f), 1f to Color.Black.copy(alpha = 0.78f))
             else -> Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.12f), 0.55f to Color.Black.copy(alpha = 0.32f), 1f to Color.Black.copy(alpha = 0.55f))
         }
-        Box(Modifier.fillMaxSize().background(veil))
+        // Sur les temps forts, le voile s'éclaircit un peu : le nuage s'illumine.
+        Box(Modifier.fillMaxSize().drawBehind { drawRect(veil, alpha = 1f - 0.3f * beat) })
     }
 }
 
 /** Une nappe : dégradé radial de rayon 1, placé et agrandi par sa matrice locale à chaque image. */
 private class CloudBlob(color: Color, alpha: Float) {
     val shader = android.graphics.RadialGradient(
-        0f, 0f, 1f, intArrayOf(color.copy(alpha = alpha).toArgb(), color.copy(alpha = 0f).toArgb()), null, android.graphics.Shader.TileMode.CLAMP,
+        0f, 0f, 1f,
+        intArrayOf(color.copy(alpha = alpha).toArgb(), color.copy(alpha = alpha * 0.55f).toArgb(), color.copy(alpha = 0f).toArgb()),
+        floatArrayOf(0f, 0.5f, 1f), android.graphics.Shader.TileMode.CLAMP,
     )
     val brush = ShaderBrush(shader)
     val matrix = android.graphics.Matrix()

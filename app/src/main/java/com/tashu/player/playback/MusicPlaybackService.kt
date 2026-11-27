@@ -37,7 +37,9 @@ import com.tashu.player.domain.repository.SettingsRepository
 import com.tashu.player.playback.cache.OfflineManager
 import com.tashu.player.playback.cache.PlaybackFactory
 import com.tashu.player.playback.dsp.AudioEffectsController
+import com.tashu.player.playback.dsp.MusicPulse
 import com.tashu.player.playback.dsp.ParametricEqAudioProcessor
+import com.tashu.player.playback.dsp.PulseAudioSink
 import com.tashu.player.playback.dsp.SpectrumAnalyzer
 import com.tashu.player.playback.dsp.SpectrumTapAudioProcessor
 import com.tashu.player.ui.MainActivity
@@ -75,6 +77,7 @@ class MusicPlaybackService : MediaLibraryService() {
     @Inject lateinit var db: MusicDatabase
     @Inject lateinit var json: Json
     @Inject lateinit var spectrum: SpectrumAnalyzer
+    @Inject lateinit var pulse: MusicPulse
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var player: ExoPlayer
@@ -91,11 +94,14 @@ class MusicPlaybackService : MediaLibraryService() {
 
         val renderersFactory = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
-                DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf<AudioProcessor>(peq, SpectrumTapAudioProcessor(spectrum)))
-                    .setEnableFloatOutput(enableFloatOutput)
-                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                    .build()
+                PulseAudioSink(
+                    DefaultAudioSink.Builder(context)
+                        .setAudioProcessors(arrayOf<AudioProcessor>(peq, SpectrumTapAudioProcessor(spectrum, pulse)))
+                        .setEnableFloatOutput(enableFloatOutput)
+                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                        .build(),
+                    pulse,
+                )
         }
             // Utilise les décodeurs d'extension (FFmpeg : ALAC, etc.) s'ils sont présents dans l'APK.
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)

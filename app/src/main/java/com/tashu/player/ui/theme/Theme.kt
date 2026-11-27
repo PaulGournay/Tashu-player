@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.palette.graphics.Palette
+import kotlin.math.abs
 import com.materialkolor.PaletteStyle
 import com.tashu.player.domain.model.ThemeColorSource
 import com.tashu.player.domain.model.ThemeMode
@@ -164,7 +165,10 @@ internal fun rememberCloudColors(artworkPath: String?): List<Color> {
             colorResource(android.R.color.system_accent3_300),
         ) else fromArtwork
     }
-    return remember(source, settings.style) { List(5) { source[it % source.size] }.styled(settings.style) }
+    return remember(source, settings.style) {
+        val tinted = source.filter { it.hsv()[1] >= 0.15f }.ifEmpty { source }
+        List(5) { tinted[it % tinted.size] }.styled(settings.style).varied(if (settings.style == ThemeStyle.FIDELITY) 0.6f else 1f)
+    }
 }
 
 private fun Color.hsv(): FloatArray = FloatArray(3).also { android.graphics.Color.colorToHSV(toArgb(), it) }
@@ -176,6 +180,27 @@ private fun hsv(h: Float, s: Float, v: Float): Color =
 private fun colorFamily(c: Color): List<Color> {
     val (h, s, v) = c.hsv()
     return listOf(hsv(h, s, v), hsv(h + 28f, s * 0.9f, v), hsv(h - 28f, s, v * 0.8f), hsv(h, s * 0.55f, v + 0.25f), hsv(h + 12f, s, v * 0.6f))
+}
+
+private fun hueGap(a: Float, b: Float): Float = abs(((a - b + 540f) % 360f) - 180f)
+
+private val VARIED_HUE = floatArrayOf(0f, 40f, -40f, 80f, 125f)
+private val VARIED_VALUE = floatArrayOf(1f, 1.1f, 0.85f, 0.95f, 1.05f)
+
+/**
+ * Écarte les teintes d'une palette trop uniforme (teintes voisines jusqu'à 125°, plus claires ou plus sombres) ; [strength] 0..1.
+ * Les grands écarts partent du côté opposé au jaune-vert, qui vire au kaki une fois assombri.
+ */
+private fun List<Color>.varied(strength: Float): List<Color> {
+    val hues = map { it.hsv() }
+    val h0 = hues[0][0]
+    val spread = hues.filter { it[1] >= 0.25f && it[2] >= 0.25f }.maxOfOrNull { hueGap(it[0], h0) } ?: 0f
+    val away = hueGap(h0 + 80f, 75f) >= hueGap(h0 - 80f, 75f)
+    val k = strength * (1f - spread / 150f).coerceIn(0f, 1f) * (if (away) 1f else -1f)
+    return hues.mapIndexed { i, (h, s, v) ->
+        if (s < 0.08f) return@mapIndexed hsv(h, s, v * VARIED_VALUE[i])
+        hsv(h + VARIED_HUE[i] * k, maxOf(s, 0.45f * strength), maxOf(v, 0.7f) * (1f + (VARIED_VALUE[i] - 1f) * strength))
+    }
 }
 
 private val EXPRESSIVE_SHIFT = floatArrayOf(0f, 50f, -50f, 120f, -120f)

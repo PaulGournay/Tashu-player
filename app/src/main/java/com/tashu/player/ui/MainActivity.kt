@@ -20,6 +20,7 @@ import com.tashu.player.ui.navigation.TashuNavHost
 import com.tashu.player.ui.navigation.Routes
 import com.tashu.player.domain.model.ThemeSettings
 import com.tashu.player.domain.repository.SettingsRepository
+import com.tashu.player.ui.theme.LocalMusicPulse
 import com.tashu.player.ui.theme.LocalThemeSettings
 import com.tashu.player.ui.theme.TashuTheme
 import com.tashu.player.ui.theme.isAppInDarkTheme
@@ -27,12 +28,14 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import com.tashu.player.drive.auth.GoogleAuthManager
 import com.tashu.player.playback.PlayerConnection
+import com.tashu.player.playback.dsp.MusicPulse
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var auth: GoogleAuthManager
     @Inject lateinit var player: PlayerConnection
     @Inject lateinit var settings: SettingsRepository
+    @Inject lateinit var pulse: MusicPulse
 
     private val consentLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         auth.onConsentResult(result.data)
@@ -60,7 +63,7 @@ class MainActivity : ComponentActivity() {
                 if (intent.getBooleanExtra(EXTRA_OPEN_PLAYER, false)) nav.navigate(Routes.NOW_PLAYING)
             }
 
-            CompositionLocalProvider(LocalThemeSettings provides theme) {
+            CompositionLocalProvider(LocalThemeSettings provides theme, LocalMusicPulse provides pulse) {
                 // Icônes des barres système claires ou sombres selon le mode choisi dans le menu.
                 val dark = isAppInDarkTheme()
                 LaunchedEffect(dark) {

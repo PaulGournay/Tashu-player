@@ -143,6 +143,7 @@ fun LibraryScreen(
     onOpenAlbum: (Long) -> Unit,
     onOpenPlayer: () -> Unit,
     onManageFolders: () -> Unit,
+    onPersonalize: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     var section by rememberSaveable { mutableStateOf(LibrarySection.ALBUMS) }
@@ -150,7 +151,6 @@ fun LibraryScreen(
     val playerState by vm.player.state.collectAsStateWithLifecycle()
     val scan by vm.scanProgress.collectAsStateWithLifecycle()
     val seed by rememberArtworkSeed(playerState.metadata.artworkUri?.path)
-    val theme by vm.themeSettings.collectAsStateWithLifecycle()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val haze = rememberGlassBackdrop()
     BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
@@ -165,13 +165,12 @@ fun LibraryScreen(
             drawerContent = {
                 AppDrawer(
                     backdrop = haze,
-                    theme = theme,
-                    onThemeChange = vm::updateTheme,
                     onLibrary = { scope.launch { drawer.close() } },
                     onManageFolders = { scope.launch { drawer.close() }; onManageFolders() },
                     // Le menu reste ouvert : on y suit l'indexation en direct.
                     scan = scan,
                     onRescan = { vm.rescan() },
+                    onPersonalize = { scope.launch { drawer.close() }; onPersonalize() },
                 )
             },
         ) {
